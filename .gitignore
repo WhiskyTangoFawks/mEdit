@@ -1,0 +1,25 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+logs/
+*.bak
+
+# Node
+node_modules/
+dist/
+bethesda-plugin-editor/out/
+*.vsix
+
+# DuckDB cache
+*.duckdb
+*.duckdb.wal
+
+# VS Code extension generated
+src/generated/
+
+# OS
+.DS_Store
+Thumbs.db
