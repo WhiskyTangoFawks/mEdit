@@ -1,3 +1,4 @@
+using MEditService.Core.Edits;
 using MEditService.Core.Queries;
 using MEditService.Core.Records;
 using MEditService.Core.Schema;
@@ -16,6 +17,7 @@ public sealed class SessionManager : ISessionManager, IDisposable
     private readonly ISchemaReflector _schemaReflector;
     private readonly ITableDdlBuilder _ddlBuilder;
     private readonly IFieldMetadataMapper _metadataMapper;
+    private readonly IPluginWriter _writer;
     private IGameSession? _session;
     private IRecordRepository? _repository;
     private bool _disposed;
@@ -28,11 +30,13 @@ public sealed class SessionManager : ISessionManager, IDisposable
         ISchemaReflector schemaReflector,
         ITableDdlBuilder ddlBuilder,
         IFieldMetadataMapper metadataMapper,
+        IPluginWriter writer,
         ILogger<SessionManager>? logger = null)
     {
         _schemaReflector = schemaReflector;
         _ddlBuilder = ddlBuilder;
         _metadataMapper = metadataMapper;
+        _writer = writer;
         _logger = logger ?? NullLogger<SessionManager>.Instance;
     }
 
@@ -124,6 +128,40 @@ public sealed class SessionManager : ISessionManager, IDisposable
 
             return PluginResponse.FromMetadata(created);
         }
+    }
+
+    public async Task<SaveResult> SavePlugin(string plugin, IReadOnlyList<PendingChange> changes)
+    {
+        PluginMetadata metadata;
+        IRecordRepository repository;
+        GameRelease gameRelease;
+
+        lock (_lock)
+        {
+            if (_session == null || _repository == null)
+                throw new InvalidOperationException("No session loaded.");
+            var meta = _session.Plugins.FirstOrDefault(p =>
+                string.Equals(p.Name, plugin, StringComparison.OrdinalIgnoreCase));
+            if (meta == null)
+                throw new KeyNotFoundException($"Plugin '{plugin}' not found in session.");
+            metadata = meta;
+            repository = _repository;
+            gameRelease = _gameRelease;
+        }
+
+        var result = await _writer.SaveAsync(metadata.Path, changes, gameRelease);
+
+        var modKey = ModKey.FromFileName(Path.GetFileName(metadata.Path));
+        var modPath = new ModPath(modKey, metadata.Path);
+        using var mod = ModFactory.ImportGetter(modPath, gameRelease);
+
+        lock (_lock)
+        {
+            repository.Index(mod, metadata.LoadOrderIndex);
+            repository.UpdateWinners();
+        }
+
+        return result;
     }
 
     public void Unload()

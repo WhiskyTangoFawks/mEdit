@@ -6,7 +6,7 @@ A VS Code extension + local C# service for viewing, editing, and comparing Bethe
 
 **Backend** — C# ASP.NET Core minimal API (`MEditService/`)
 - Mutagen: plugin parsing/writing
-- DuckDB: in-process record repository — the service's only read path for record queries
+- DuckDB: in-process record index — the indexed read model of committed (on-disk) record data
 - Swashbuckle: OpenAPI spec auto-generation
 
 **Frontend** — TypeScript VS Code extension + React webviews (`medit-vscode/`)
@@ -14,7 +14,7 @@ A VS Code extension + local C# service for viewing, editing, and comparing Bethe
 
 ## Key Invariants
 
-- Binary plugins on disk are source of truth; DuckDB is the service's read path — all record queries flow through `IRecordRepository`, not directly through Mutagen. Writes go through Mutagen to disk, then re-indexed into DuckDB to keep the repository current. Never write to DuckDB without also writing to disk first.
+- Binary plugins on disk are the source of truth for committed record data. DuckDB is the indexed read model — the only read path for queries; all record queries flow through `IRecordRepository`, not directly through Mutagen. Staged changes not yet written to disk are buffered in `PendingChangeService` (in-memory only); DuckDB reflects only what is committed on disk. Writes go through Mutagen to disk first, then the affected plugin is re-indexed into DuckDB. Never write to DuckDB without first writing to disk.
 - Records table uses `(form_key, plugin)` composite key — one row per plugin that contains that FormKey
 - DuckDB schema is reflection-generated at startup from Mutagen types
 - Backend and extension are always started independently by the user
@@ -30,7 +30,7 @@ Each folder owns one responsibility. When adding code, place it where the owners
 |--------|------|---------|
 | `Session/` | The live game environment and its lifecycle | `GameSession`, `SessionManager`, `PluginMetadata` |
 | `Schema/` | Static knowledge about Mutagen record types — both read and write | `SchemaReflector`, `RecordTableSchema`, `ColumnSpec`, `FieldMetadataMapper` |
-| `Records/` | The DuckDB record index: inserting, querying, DDL, cache invalidation | `IRecordRepository`, `DuckDbRecordRepository`, `TableDdlBuilder`, `SessionCache` |
+| `Records/` | The DuckDB record index: inserting committed records, querying, DDL | `IRecordRepository`, `DuckDbRecordRepository`, `TableDdlBuilder`, `SessionCache` |
 | `Queries/` | Answering application-level questions about records | `RecordQueryService`, `ConflictClassifier`, `Models` (DTOs) |
 | `Edits/` | Staging and persisting user edits | `PendingChangeService`, `PluginWriter`, `SaveResult` |
 | `Resolution/` | FormKey ↔ EditorID translation | `FormKeyResolver` |

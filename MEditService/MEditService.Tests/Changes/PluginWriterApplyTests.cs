@@ -1,7 +1,5 @@
 using System.Text.Json;
 using MEditService.Core.Edits;
-using MEditService.Core.Queries;
-using MEditService.Core.Records;
 using MEditService.Core.Schema;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Fallout4;
@@ -152,78 +150,58 @@ public class PluginWriterApplyTests
         new(Guid.NewGuid(), formKey.ToString(), "TestPlugin.esp", fieldPath, "npc_",
             JsonDocument.Parse("null").RootElement, J(json), "user", null, DateTime.UtcNow);
 
-    private static (string pluginPath, IRecordRepository repo, FormKey npcKey) BuildFixture()
+    private static (string pluginPath, FormKey npcKey) BuildFixture()
     {
-        var reflector = new SchemaReflector();
-        var mapper = new FieldMetadataMapper();
         FormKey npcKey = default;
         var data = new PluginFixtureBuilder("pw-apply")
             .WithPlugin("TestPlugin.esp", mod => npcKey = mod.Npcs.AddNew("ApplyTestNPC").FormKey)
             .Build();
 
         var pluginPath = Path.Combine(data.DataFolder, "TestPlugin.esp");
-        var modPath = new ModPath(ModKey.FromFileName("TestPlugin.esp"), pluginPath);
-        var mod = Fallout4Mod.CreateFromBinaryOverlay(modPath, Fallout4Release.Fallout4);
-
-        var repo = new InMemoryRecordRepository(reflector, mapper);
-        repo.Initialize(GameRelease.Fallout4);
-        repo.Index(mod, 0);
-        repo.UpdateWinners();
-
-        return (pluginPath, repo, npcKey);
+        return (pluginPath, npcKey);
     }
 
     [Fact]
     public async Task SaveAsync_WritableField_AppearsInApplied()
     {
-        var (pluginPath, repo, npcKey) = BuildFixture();
-        using (repo)
-        {
-            var writer = new PluginWriter(_reflector);
-            // "aggression" is an enum column with an Apply function
-            var change = MakeChange(npcKey, "aggression", "\"Frenzied\"");
+        var (pluginPath, npcKey) = BuildFixture();
+        var writer = new PluginWriter(_reflector);
+        var change = MakeChange(npcKey, "aggression", "\"Frenzied\"");
 
-            var result = await writer.SaveAsync(pluginPath, [change], repo, 0, GameRelease.Fallout4);
+        var result = await writer.SaveAsync(pluginPath, [change], GameRelease.Fallout4);
 
-            Assert.Contains("aggression", result.Applied);
-            Assert.Empty(result.ReadOnly);
-            Assert.Empty(result.NotFound);
-            Assert.NotNull(result.BackupPath);
-        }
+        Assert.Contains("aggression", result.Applied);
+        Assert.Empty(result.ReadOnly);
+        Assert.Empty(result.NotFound);
+        Assert.NotNull(result.BackupPath);
     }
 
     [Fact]
     public async Task SaveAsync_FormLinkField_AppearsInReadOnly()
     {
-        var (pluginPath, repo, npcKey) = BuildFixture();
-        using (repo)
-        {
-            var writer = new PluginWriter(_reflector);
-            var change = MakeChange(npcKey, "race", "\"000001:Fallout4.esm\"");
+        var (pluginPath, npcKey) = BuildFixture();
+        var writer = new PluginWriter(_reflector);
+        var change = MakeChange(npcKey, "race", "\"000001:Fallout4.esm\"");
 
-            var result = await writer.SaveAsync(pluginPath, [change], repo, 0, GameRelease.Fallout4);
+        var result = await writer.SaveAsync(pluginPath, [change], GameRelease.Fallout4);
 
-            Assert.Contains("race", result.ReadOnly);
-            Assert.Empty(result.Applied);
-            Assert.Empty(result.NotFound);
-        }
+        Assert.Contains("race", result.ReadOnly);
+        Assert.Empty(result.Applied);
+        Assert.Empty(result.NotFound);
     }
 
     [Fact]
     public async Task SaveAsync_UnknownField_AppearsInNotFound()
     {
-        var (pluginPath, repo, npcKey) = BuildFixture();
-        using (repo)
-        {
-            var writer = new PluginWriter(_reflector);
-            var change = MakeChange(npcKey, "nonexistent_field", "\"value\"");
+        var (pluginPath, npcKey) = BuildFixture();
+        var writer = new PluginWriter(_reflector);
+        var change = MakeChange(npcKey, "nonexistent_field", "\"value\"");
 
-            var result = await writer.SaveAsync(pluginPath, [change], repo, 0, GameRelease.Fallout4);
+        var result = await writer.SaveAsync(pluginPath, [change], GameRelease.Fallout4);
 
-            Assert.Contains("nonexistent_field", result.NotFound);
-            Assert.Empty(result.Applied);
-            Assert.Empty(result.ReadOnly);
-        }
+        Assert.Contains("nonexistent_field", result.NotFound);
+        Assert.Empty(result.Applied);
+        Assert.Empty(result.ReadOnly);
     }
 
     // --- IsReadOnly ---

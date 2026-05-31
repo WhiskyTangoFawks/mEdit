@@ -4,6 +4,7 @@ using MEditService.Core.Records;
 using MEditService.Core.Schema;
 using MEditService.Core.Session;
 using Mutagen.Bethesda;
+using Mutagen.Bethesda.Fallout4;
 
 namespace MEditService.Tests.Query;
 
@@ -17,7 +18,7 @@ public class RecordQueryServiceTests : IClassFixture<TestPluginFixture>, IDispos
         var reflector = new SchemaReflector();
         var ddl = new TableDdlBuilder(reflector);
         var mapper = new FieldMetadataMapper();
-        _manager = new SessionManager(reflector, ddl, mapper);
+        _manager = new SessionManager(reflector, ddl, mapper, new PluginWriter(reflector));
         _manager.Load(fixture.DataFolder, fixture.PluginsTxtPath, GameRelease.Fallout4);
         _svc = new RecordQueryService(_manager, new PendingChangeService(), reflector, new ConflictClassifier());
     }

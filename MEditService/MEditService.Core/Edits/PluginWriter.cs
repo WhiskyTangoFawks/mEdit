@@ -1,5 +1,4 @@
 using System.Text.Json;
-using MEditService.Core.Records;
 using MEditService.Core.Schema;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
@@ -12,8 +11,6 @@ public interface IPluginWriter
     Task<SaveResult> SaveAsync(
         string pluginPath,
         IReadOnlyList<PendingChange> changes,
-        IRecordRepository repository,
-        int loadOrderIndex,
         GameRelease gameRelease);
 
     bool IsReadOnly(GameRelease release, string recordType, string fieldPath);
@@ -33,8 +30,6 @@ public sealed class PluginWriter : IPluginWriter
     public async Task<SaveResult> SaveAsync(
         string pluginPath,
         IReadOnlyList<PendingChange> changes,
-        IRecordRepository repository,
-        int loadOrderIndex,
         GameRelease gameRelease)
     {
         var backupPath = CreateBackup(pluginPath);
@@ -82,9 +77,6 @@ public sealed class PluginWriter : IPluginWriter
             .WithLoadOrderFromHeaderMasters()
             .WithNoDataFolder()
             .WriteAsync();
-
-        repository.Index((IModGetter)mod, loadOrderIndex);
-        repository.UpdateWinners();
 
         PruneOldBackups(pluginPath);
 

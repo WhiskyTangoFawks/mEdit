@@ -139,8 +139,7 @@ public static class ChangeEndpoints
         app.MapPost("/plugins/{plugin}/save", async (
             [FromRoute] string plugin,
             IPendingChangeService changes,
-            ISessionManager session,
-            IPluginWriter writer) =>
+            ISessionManager session) =>
         {
             var decodedPlugin = Uri.UnescapeDataString(plugin);
 
@@ -160,8 +159,7 @@ public static class ChangeEndpoints
 
             try
             {
-                var result = await writer.SaveAsync(
-                    metadata.Path, pending, session.Repository!, metadata.LoadOrderIndex, s.GameRelease);
+                var result = await session.SavePlugin(decodedPlugin, pending);
                 return Results.Ok(new
                 {
                     backupPath = result.BackupPath,

@@ -1,3 +1,4 @@
+using MEditService.Core.Edits;
 using MEditService.Core.Queries;
 using MEditService.Core.Records;
 using MEditService.Core.Schema;
@@ -17,7 +18,7 @@ public class SessionManagerThreadSafetyTests : IClassFixture<TestPluginFixture>
 
     private SessionManager MakeLoadedManager()
     {
-        var m = new SessionManager(_reflector, _ddl, _mapper);
+        var m = new SessionManager(_reflector, _ddl, _mapper, new PluginWriter(_reflector));
         m.Load(_fixture.DataFolder, _fixture.PluginsTxtPath, GameRelease.Fallout4);
         return m;
     }
@@ -72,7 +73,7 @@ public class SessionManagerThreadSafetyTests : IClassFixture<TestPluginFixture>
     [Fact]
     public void CreatePlugin_NoSession_Throws()
     {
-        using var manager = new SessionManager(_reflector, _ddl, _mapper);
+        using var manager = new SessionManager(_reflector, _ddl, _mapper, new PluginWriter(_reflector));
         Assert.Throws<InvalidOperationException>(() => manager.CreatePlugin("X.esp"));
     }
 

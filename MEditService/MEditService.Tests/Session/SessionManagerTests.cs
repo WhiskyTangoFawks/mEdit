@@ -1,8 +1,12 @@
+using System.Text.Json;
+using MEditService.Core.Edits;
 using MEditService.Core.Queries;
 using MEditService.Core.Records;
 using MEditService.Core.Schema;
 using MEditService.Core.Session;
 using Mutagen.Bethesda;
+using Mutagen.Bethesda.Fallout4;
+using Mutagen.Bethesda.Plugins;
 
 namespace MEditService.Tests.Session;
 
@@ -16,7 +20,13 @@ public class SessionManagerTests : IClassFixture<TestPluginFixture>
 
     public SessionManagerTests(TestPluginFixture fixture) => _fixture = fixture;
 
-    private SessionManager MakeManager() => new(_reflector, _ddl, _mapper);
+    private static JsonElement J(string raw) => JsonDocument.Parse(raw).RootElement.Clone();
+
+    private static PendingChange MakePendingChange(string formKey, string plugin, string fieldPath, string recordType, string json) =>
+        new(Guid.NewGuid(), formKey, plugin, fieldPath, recordType,
+            J("null"), J(json), "user", null, DateTime.UtcNow);
+
+    private SessionManager MakeManager() => new(_reflector, _ddl, _mapper, new PluginWriter(_reflector));
 
     [Fact]
     public void Load_PopulatesSessionAndRepository()
@@ -84,5 +94,56 @@ public class SessionManagerTests : IClassFixture<TestPluginFixture>
         manager.Load(_fixture.DataFolder, _fixture.PluginsTxtPath, GameRelease.Fallout4);
 
         Assert.Equal(GameRelease.Fallout4, manager.Session!.GameRelease);
+    }
+
+    // --- SavePlugin ---
+
+    [Fact]
+    public async Task SavePlugin_WritableField_ReturnsSaveResultWithApplied()
+    {
+        FormKey npcKey = default;
+        var data = new PluginFixtureBuilder("sm-save")
+            .WithPlugin("TestPlugin.esp", mod =>
+                npcKey = mod.Npcs.AddNew("SaveTestNPC").FormKey)
+            .Build();
+        using (data)
+        {
+            using var manager = MakeManager();
+            manager.Load(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+            var change = MakePendingChange(npcKey.ToString(), "TestPlugin.esp", "aggression", "npc_", "\"Frenzied\"");
+
+            var result = await manager.SavePlugin("TestPlugin.esp", [change]);
+
+            Assert.Contains("aggression", result.Applied);
+            Assert.Empty(result.ReadOnly);
+            Assert.Empty(result.NotFound);
+        }
+    }
+
+    [Fact]
+    public async Task SavePlugin_AfterSave_RepositoryReflectsNewFieldValue()
+    {
+        FormKey npcKey = default;
+        var data = new PluginFixtureBuilder("sm-reindex")
+            .WithPlugin("TestPlugin.esp", mod =>
+            {
+                var npc = mod.Npcs.AddNew("ReindexTestNPC");
+                npc.Aggression = Npc.AggressionType.Unaggressive;
+                npcKey = npc.FormKey;
+            })
+            .Build();
+        using (data)
+        {
+            using var manager = MakeManager();
+            manager.Load(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+            var schema = _reflector.GetSchemas(GameRelease.Fallout4)["npc_"];
+            var change = MakePendingChange(npcKey.ToString(), "TestPlugin.esp", "aggression", "npc_", "\"Frenzied\"");
+
+            await manager.SavePlugin("TestPlugin.esp", [change]);
+
+            var detail = manager.Repository!.GetRecord("npc_", schema, npcKey.ToString(), "TestPlugin.esp", winnerOnly: false)!;
+            var aggressionValue = detail.Fields.First(f => f.Metadata.Name == "aggression").Value?.ToString();
+            Assert.Equal("Frenzied", aggressionValue);
+        }
     }
 }
