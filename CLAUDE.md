@@ -104,12 +104,26 @@ Each module owns one responsibility. `extension.ts` is the composition root — 
 All commands run from `medit-vscode/`.
 
 ```bash
-npm run test:unit       # run Vitest unit tests (no backend required)
-npm run build           # type-check + bundle extension + webview
-npm run generate-api    # regenerate src/generated/api.ts from live backend at :5172
+npm run test:unit        # run Vitest unit tests (no backend required)
+npm run test:integration # run integration tests inside a real VS Code process (~10s, no backend required)
+npm run build            # type-check + bundle extension + webview
+npm run generate-api     # regenerate src/generated/api.ts from live backend at :5172
 ```
 
 `generate-api` requires the C# backend to be running. Run it after adding or changing any C# endpoint. It rewrites `src/generated/api.ts` — commit the updated file alongside your C# changes.
+
+### Integration tests (`src/test/integration/extension.test.ts`)
+
+Integration tests run inside a real VS Code process via `@vscode/test-cli`. They use a mock HTTP server on port 15172 (configured via `src/test/integration/workspace/.vscode/settings.json`) so the extension activates in "attached" state without a real backend.
+
+**What they cover:** extension activation without crashing, all expected commands being registered, `mEdit.openEditor` creating and reusing a webview panel.
+
+**What they do not cover:** tree view click dispatch (VS Code's responsibility), webview content, anything requiring live backend data.
+
+**Update the integration tests when:**
+- **Adding a new command** — add the command ID to `EXPECTED_COMMANDS` in `extension.test.ts`. This is the primary regression guardrail: if the command is ever dropped from `extension.ts`, the test fails immediately.
+- **Adding new `extension.ts` behavior that isn't covered by unit tests** — e.g. a new panel type, a second singleton webview. Add a test that calls `executeCommand` and asserts the resulting VS Code state (tab count, active editor, etc.).
+- **Do not add integration tests for** logic that lives outside `extension.ts`. `SessionController`, `PluginRepository`, `BackendManager`, `PluginTreeProvider` are all unit-tested without VS Code — keep it that way.
 
 ## C# endpoint invariant: every endpoint must declare its response types
 
@@ -170,6 +184,7 @@ Use this checklist when adding any user-facing action, whether triggered from th
 **4. Tests**
 - Run `npm run test:unit` to confirm green before and after.
 - If the new module imports from `vscode`, add `vi.mock('vscode', ...)` at the top of its test file — see `PluginTreeProvider.test.ts` for the mock shape.
+- Add the new command ID to `EXPECTED_COMMANDS` in `src/test/integration/extension.test.ts` and run `npm run test:integration` to confirm it's registered.
 
 ## Conventions
 

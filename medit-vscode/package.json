@@ -110,8 +110,7 @@
     "watch": "node esbuild.mjs --watch",
     "generate-api": "openapi-typescript http://localhost:5172/swagger/v1/swagger.json -o src/generated/api.ts",
     "test:unit": "vitest run",
-    "pretest": "npm run build",
-    "test": "vscode-test"
+    "test:integration": "tsc -p tsconfig.integration.json && vscode-test"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
@@ -120,6 +119,9 @@
     "@types/vscode": "^1.85.0",
     "@vitejs/plugin-react": "^4.0.0",
     "@vitest/coverage-v8": "^2.1.9",
+    "@types/mocha": "^10.0.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
     "esbuild": "^0.28.0",
     "openapi-typescript": "^7.13.0",
     "typescript": "^5.3.0",

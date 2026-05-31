@@ -5,7 +5,7 @@ Start the backend, build the extension if needed, and launch the VS Code Extensi
 ## 1 — Start the backend
 
 ```bash
-cd BethesdaPluginService/BethesdaPluginService.Api && dotnet run -- \
+cd MEditService/MEditService.Api && dotnet run -- \
   --data-folder "/home/wayne/.steam/debian-installation/steamapps/common/Fallout 4/Data" \
   --plugins-txt "/home/wayne/.steam/debian-installation/steamapps/compatdata/377160/pfx/drive_c/users/steamuser/AppData/Local/Fallout4/Plugins.txt" &
 ```
@@ -21,13 +21,13 @@ Vanilla paths:
 ## 2 — Build the extension (if needed)
 
 ```bash
-cd bethesda-plugin-editor && npm run build
+cd medit-vscode && npm run build
 ```
 
 ## 3 — Launch VS Code Extension Development Host
 
 ```bash
-code --extensionDevelopmentPath="/home/wayne/Games/FO4/mEdit/bethesda-plugin-editor" \
+code --extensionDevelopmentPath="/home/wayne/Games/FO4/mEdit/medit-vscode" \
      "/home/wayne/Games/FO4/mEdit" &
 ```
 
