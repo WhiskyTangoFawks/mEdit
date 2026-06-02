@@ -1,6 +1,8 @@
+using System.Text.Json;
 using MEditService.Core.Queries;
 using MEditService.Core.Records;
 using MEditService.Core.Schema;
+using Microsoft.Extensions.Logging.Abstractions;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Fallout4;
 using Mutagen.Bethesda.Plugins;
@@ -18,7 +20,7 @@ public class DuckDbRecordRepositoryTests : IClassFixture<TestPluginFixture>
 
     private DuckDbRecordRepository LoadedRepository()
     {
-        var repo = new DuckDbRecordRepository(_reflector, _ddl);
+        var repo = new DuckDbRecordRepository(_reflector, _ddl, NullLogger.Instance);
         repo.Initialize(GameRelease.Fallout4);
         var modPath = new ModPath(
             ModKey.FromFileName(TestPluginFixture.PluginName),
@@ -105,6 +107,7 @@ public class DuckDbRecordRepositoryTests : IClassFixture<TestPluginFixture>
 
         Assert.NotNull(record);
         Assert.Equal(TestPluginFixture.PluginName, record.Plugin);
+        Assert.Equal("TestNPC01", record.EditorId);
     }
 
     [Fact]
@@ -115,6 +118,43 @@ public class DuckDbRecordRepositoryTests : IClassFixture<TestPluginFixture>
         var record = repo.GetRecord("npc_", "FFFFFF:Unknown.esp", null, winnerOnly: false);
 
         Assert.Null(record);
+    }
+
+    [Fact]
+    public void GetRecord_WinnerOnly_True_ReturnsWinnerNotEarlierOverride()
+    {
+        var dataFolder = Path.Combine(Path.GetTempPath(), $"medit-winner-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dataFolder);
+        try
+        {
+            var modA = new Fallout4Mod(ModKey.FromFileName("PluginA.esm"), Fallout4Release.Fallout4);
+            var npcKey = modA.Npcs.AddNew("SharedNPC").FormKey;
+            modA.WriteToBinary(Path.Combine(dataFolder, "PluginA.esm"));
+
+            var modALoaded = (IModGetter)Fallout4Mod.CreateFromBinaryOverlay(
+                new ModPath(ModKey.FromFileName("PluginA.esm"), Path.Combine(dataFolder, "PluginA.esm")),
+                Fallout4Release.Fallout4);
+
+            var modB = new Fallout4Mod(ModKey.FromFileName("PluginB.esp"), Fallout4Release.Fallout4);
+            modB.ModHeader.MasterReferences.Add(new MasterReference { Master = ModKey.FromFileName("PluginA.esm") });
+            modB.Npcs.Set(modALoaded.EnumerateMajorRecords<INpcGetter>().First().DeepCopy());
+
+            using var repo = new DuckDbRecordRepository(_reflector, _ddl, NullLogger.Instance);
+            repo.Initialize(GameRelease.Fallout4);
+            repo.Index(modALoaded, 0);
+            repo.Index(modB, 1);
+            repo.UpdateWinners();
+
+            var record = repo.GetRecord("npc_", npcKey.ToString(), null, winnerOnly: true);
+
+            Assert.NotNull(record);
+            Assert.True(record.IsWinner);
+            Assert.Equal("PluginB.esp", record.Plugin);
+        }
+        finally
+        {
+            Directory.Delete(dataFolder, recursive: true);
+        }
     }
 
     // --- GetAllOverrides ---
@@ -140,7 +180,7 @@ public class DuckDbRecordRepositoryTests : IClassFixture<TestPluginFixture>
             { Master = ModKey.FromFileName("PluginA.esm") });
             modB.Npcs.Set(modALoaded.EnumerateMajorRecords<INpcGetter>().First().DeepCopy());
 
-            using var repo = new DuckDbRecordRepository(_reflector, _ddl);
+            using var repo = new DuckDbRecordRepository(_reflector, _ddl, NullLogger.Instance);
             repo.Initialize(GameRelease.Fallout4);
             repo.Index(modALoaded, 0);
             repo.Index(modB, 1);
@@ -204,6 +244,151 @@ public class DuckDbRecordRepositoryTests : IClassFixture<TestPluginFixture>
         using var repo = LoadedRepository();
         var result = repo.GetRecords("npc_", null, null, 100, 0);
         Assert.All(result.Items, r => Assert.True(r.IsWinner));
+    }
+
+    // --- Array field deserialization ---
+
+    [Fact]
+    public void GetRecord_ArrayField_ValueIsJsonArrayNotString()
+    {
+        FormKey npcFormKey = default;
+        using var fixture = new PluginFixtureBuilder("medit-array")
+            .WithPlugin("ArrayTest.esm", mod =>
+            {
+                var npc = mod.Npcs.AddNew("KeywordedNPC");
+                npcFormKey = npc.FormKey;
+                npc.Keywords =
+                [
+                    new FormLink<IKeywordGetter>(FormKey.Factory("000001:ArrayTest.esm")),
+                    new FormLink<IKeywordGetter>(FormKey.Factory("000002:ArrayTest.esm")),
+                ];
+            })
+            .Build();
+
+        var loaded = (IModGetter)Fallout4Mod.CreateFromBinaryOverlay(
+            new ModPath(ModKey.FromFileName("ArrayTest.esm"),
+                Path.Combine(fixture.DataFolder, "ArrayTest.esm")),
+            Fallout4Release.Fallout4);
+
+        using var repo = new DuckDbRecordRepository(_reflector, _ddl, NullLogger.Instance);
+        repo.Initialize(GameRelease.Fallout4);
+        repo.Index(loaded, 0);
+        repo.UpdateWinners();
+
+        var record = repo.GetRecord("npc_", npcFormKey.ToString(), null, winnerOnly: true);
+
+        Assert.NotNull(record);
+        var keywordsField = record.Fields.FirstOrDefault(f => f.Metadata.Name == "keywords");
+        Assert.NotNull(keywordsField);
+        var element = Assert.IsType<JsonElement>(keywordsField.Value);
+        Assert.Equal(JsonValueKind.Array, element.ValueKind);
+        Assert.Equal(2, element.GetArrayLength());
+    }
+
+    // --- Combined filter (kills AND-separator string mutant in BuildWhere) ---
+
+    [Fact]
+    public void GetRecords_WithPluginAndSearchFilter_AndFiltersApply()
+    {
+        using var repo = LoadedRepository();
+        // Both conditions active — exercises the AND separator in BuildWhere.
+        // Non-existent plugin + matching search = 0 results (not "all matching search").
+        var result = repo.GetRecords("npc_", "NonExistent.esp", "TestNPC", 100, 0);
+        Assert.Equal(0, result.Total);
+    }
+
+    // --- SearchRecords with filter (kills AddParams mutants) ---
+
+    [Fact]
+    public void SearchRecords_WithPluginFilter_ReturnsMatchingOnly()
+    {
+        var dataFolder = Path.Combine(Path.GetTempPath(), $"medit-search-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dataFolder);
+        try
+        {
+            var modA = new Fallout4Mod(ModKey.FromFileName("SearchA.esm"), Fallout4Release.Fallout4);
+            modA.Npcs.AddNew("NPC_A");
+            modA.WriteToBinary(Path.Combine(dataFolder, "SearchA.esm"));
+
+            var modB = new Fallout4Mod(ModKey.FromFileName("SearchB.esp"), Fallout4Release.Fallout4);
+            modB.Npcs.AddNew("NPC_B");
+            modB.WriteToBinary(Path.Combine(dataFolder, "SearchB.esp"));
+
+            var modALoaded = (IModGetter)Fallout4Mod.CreateFromBinaryOverlay(
+                new ModPath(ModKey.FromFileName("SearchA.esm"), Path.Combine(dataFolder, "SearchA.esm")),
+                Fallout4Release.Fallout4);
+            var modBLoaded = (IModGetter)Fallout4Mod.CreateFromBinaryOverlay(
+                new ModPath(ModKey.FromFileName("SearchB.esp"), Path.Combine(dataFolder, "SearchB.esp")),
+                Fallout4Release.Fallout4);
+
+            using var repo = new DuckDbRecordRepository(_reflector, _ddl, NullLogger.Instance);
+            repo.Initialize(GameRelease.Fallout4);
+            repo.Index(modALoaded, 0);
+            repo.Index(modBLoaded, 1);
+            repo.UpdateWinners();
+
+            var result = repo.SearchRecords(["npc_"], "SearchA.esm", null, 100, 0);
+
+            Assert.Equal(1, result.Total);
+            Assert.All(result.Items, r => Assert.Equal("SearchA.esm", r.Plugin));
+        }
+        finally
+        {
+            Directory.Delete(dataFolder, recursive: true);
+        }
+    }
+
+    // --- Null EditorID round-trip (kills ReadSummary/ReadDetail conditional mutants) ---
+
+    [Fact]
+    public void GetRecord_NullEditorId_ReturnsNullEditorId()
+    {
+        FormKey npcFormKey = default;
+        using var fixture = new PluginFixtureBuilder("medit-null-edid")
+            .WithPlugin("NullEdId.esm", mod =>
+            {
+                npcFormKey = mod.GetNextFormKey();
+                mod.Npcs.Set(new Npc(npcFormKey, Fallout4Release.Fallout4) { EditorID = null });
+            })
+            .Build();
+
+        var loaded = (IModGetter)Fallout4Mod.CreateFromBinaryOverlay(
+            new ModPath(ModKey.FromFileName("NullEdId.esm"),
+                Path.Combine(fixture.DataFolder, "NullEdId.esm")),
+            Fallout4Release.Fallout4);
+
+        using var repo = new DuckDbRecordRepository(_reflector, _ddl, NullLogger.Instance);
+        repo.Initialize(GameRelease.Fallout4);
+        repo.Index(loaded, 0);
+        repo.UpdateWinners();
+
+        var summary = repo.GetRecords("npc_", null, null, 100, 0).Items.Single();
+        Assert.Null(summary.EditorId);
+
+        var detail = repo.GetRecord("npc_", npcFormKey.ToString(), null, winnerOnly: false);
+        Assert.NotNull(detail);
+        Assert.Null(detail.EditorId);
+    }
+
+    // --- Use before Initialize (kills RequireSchemas null-coalescing mutant) ---
+
+    [Fact]
+    public void GetRecord_BeforeInitialize_Throws()
+    {
+        var repo = new DuckDbRecordRepository(_reflector, _ddl, NullLogger.Instance);
+        Assert.Throws<InvalidOperationException>(() =>
+            repo.GetRecord("npc_", "000001:Test.esp", null, winnerOnly: false));
+        repo.Dispose();
+    }
+
+    // --- Double dispose (kills _disposed boolean mutant) ---
+
+    [Fact]
+    public void Dispose_CalledTwice_DoesNotThrow()
+    {
+        var repo = new DuckDbRecordRepository(_reflector, _ddl, NullLogger.Instance);
+        repo.Dispose();
+        repo.Dispose();
     }
 
     // --- SQL injection (parameterized query contract) ---

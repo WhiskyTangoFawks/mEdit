@@ -2,85 +2,107 @@
 
 Run Stryker.NET mutation tests against `MEditService.Core`. All commands run from `MEditService/`.
 
-## Tool: Stryker.NET
+## Always run fresh — never reuse a previous run
 
-Installed as a global dotnet tool (`dotnet stryker`). Config lives at `MEditService/stryker-config.json`.
+Do not read or cite results from a prior Stryker run. The scope may have been different, and stale results give false confidence. Always execute the script for the files you are currently validating.
 
-The run always has two phases:
-1. **Initial test run** (~60s) — Stryker runs all 188 tests once to build a coverage map. This cost is fixed regardless of scope.
-2. **Mutation phase** — only mutants covered by at least one test are actually exercised. Scoping via `mutate` shrinks this phase dramatically.
+## Running the report
 
-## Glob pattern rule
-
-The `mutate` glob in `stryker-config.json` is matched against **absolute file paths**. Always prefix with `**/` or the pattern will never match anything:
-
-```json
-// correct
-"mutate": ["**/Queries/ConflictClassifier.cs"]
-
-// wrong — silently filters everything out
-"mutate": ["MEditService.Core/Queries/ConflictClassifier.cs"]
-```
-
-## Running against specific new code (preferred when validating a task)
-
-The full Core sweep takes 20–30 minutes. When validating a specific change, scope `mutate` to the file(s) you touched. This keeps the mutation phase to seconds:
+The script auto-scopes to Core files touched in the current diff (staged + unstaged + commits ahead of main), patches `stryker-config.json` at runtime, and restores it when done. Never edit `stryker-config.json` manually.
 
 ```bash
-cd MEditService
-# edit stryker-config.json to set mutate to your changed files, then:
-dotnet stryker --config-file stryker-config.json
+cd MEditService && python stryker-report.py
 ```
 
-Example `mutate` values:
-
-| Changed code | mutate value |
-|---|---|
-| Single file | `["**/Queries/ConflictClassifier.cs"]` |
-| Whole folder | `["**/Queries/**/*.cs"]` |
-| Multiple files | `["**/Queries/RecordQueryService.cs", "**/Schema/ColumnSpec.cs"]` |
-| All of Core | `["**/MEditService.Core/**/*.cs"]` |
-
-Edit `stryker-config.json` before each run. Do not commit scope-narrowed configs — restore `mutate` to the full-Core value when done.
-
-## Running against all of Core (full sweep)
-
-Remove or set `mutate` to match all Core files:
-
-```json
-"mutate": ["**/MEditService.Core/**/*.cs"]
-```
-
-Then run:
+To scope to all of Core instead:
 
 ```bash
-cd MEditService
-dotnet stryker --config-file stryker-config.json
+cd MEditService && python stryker-report.py --all
 ```
 
-Expect ~20–30 minutes. The HTML report opens at the path printed at the end of the run.
+Allow up to 3 minutes. The script prints the computed scope before running so you can confirm it is correct.
 
-## Reading results
+The script exits 0 if all mutants killed, 1 if any survivors or NoCoverage mutants remain.
 
-- **Killed** — mutant was caught by a test (good)
-- **Survived** — mutant was not caught (test gap, consider adding a case)
-- **NoCoverage** — no test exercises that code at all
-- **CompileError** — Stryker's mutation made the code uncompilable; these are skipped automatically. Two known offenders: `DuckDbRecordRepository.Index` and `SchemaReflector.GetSubFieldInfo` (both use `out` variable patterns that confuse Stryker). These will always appear as compile errors and can be ignored.
+## Performance notes
 
-The HTML report (path printed at run end) has per-file, per-mutant detail including the exact source change Stryker made.
+- **Initial test run** (~60s) — Stryker builds a coverage map. Fixed overhead regardless of scope.
+- **Mutation phase** — only mutants covered by at least one test are exercised. Auto-scoping shrinks this phase to seconds.
+
+## Reading the report
+
+The script prints each surviving or uncovered mutant with:
+- File path and line number
+- Mutator name and what the mutation changed
+- 3 lines of source context with the mutated line marked `>>>`
+- A ready-to-paste suppression snippet
+
+Status meanings:
+- **Killed** — caught by a test (good)
+- **Survived** — not caught (test gap; investigate)
+- **NoCoverage** — no test exercises this code at all
+- **CompileError** — Stryker's mutation made the code uncompilable; skipped automatically. Two known offenders: `DuckDbRecordRepository.Index` and `SchemaReflector.GetSubFieldInfo` (both use `out` variable patterns that confuse Stryker). Always appear as compile errors — ignore them.
 
 ## Handling survivors
 
-Triage each survivor into **needs coverage** or **suspected inert**.
+Triage each survivor in order. Stop at the first step that resolves it — do not skip ahead to suppression.
 
-**Needs coverage:** add a test that fails on the mutated code and passes on the original.
+**Step 1 — Needs coverage:** Add a test that fails on the mutated code and passes on the original. This is almost always the right answer.
 
-**Suspected inert:** work through these steps in order before accepting it:
+**Step 2 — Delete the code:** If the survivor is a guard against a state that cannot happen, the guard is dead code. Remove it entirely.
 
-1. **Delete** — if the code is a guard against an impossible state, remove it entirely. Dead code is a liability.
-2. **Simplify** — redundant conditions (four null checks that are always equivalent) can often be reduced. Use `!` to document invariants rather than untestable defensive throws.
-3. **Config suppression** — if a whole mutator category is inert by convention across the project (e.g. `String` mutations on exception message text), suppress it in `stryker-config.json`.
-4. **Source annotation** — last resort. The comment must explain why the code exists *and* why the mutation is inert. An annotation with no reasoning is not acceptable.
+**Step 3 — Simplify the code:** Redundant conditions can often be reduced so the mutant no longer exists.
+
+**Step 4 — Config suppression (mutator category):** If a whole mutator category is inert by convention across the project (e.g. `String` mutations on exception message text), suppress it in `stryker-config.json` under `ignore-mutants` with a comment in the PR description explaining why.
+
+**Step 5 — Source-level annotation (last resort):**
+
+Before writing a `// Stryker disable` comment, you **must** invoke the rubber-duck agent:
+
+```
+/rubber-duck  [describe the mutant, the code, and your reasoning that it is inert]
+```
+
+The annotation must explain both why the code exists **and** why the mutation is inert. An annotation without reasoning is not acceptable and will be rejected in review.
+
+## Suppression format
+
+### Source-level (line)
+
+```csharp
+// Stryker disable once <MutatorName>: <reason>
+someCode();
+```
+
+### Source-level (block)
+
+```csharp
+// Stryker disable <MutatorName>: <reason>
+someCode();
+moreCode();
+// Stryker restore <MutatorName>
+```
+
+### Config-level (mutator category across the project)
+
+```json
+"ignore-mutants": [
+  { "mutant": "StringLiteral", "description": "Exception message text is not tested by design" }
+]
+```
+
+### Common mutator names
+
+| Mutator | What it changes |
+|---|---|
+| `ConditionalBoundary` | `>` ↔ `>=`, `<` ↔ `<=` |
+| `Equality` | `==` ↔ `!=` |
+| `LogicalOperator` | `&&` ↔ `\|\|` |
+| `StringLiteral` | string contents |
+| `Arithmetic` | `+` ↔ `-`, `*` ↔ `/` |
+| `BooleanLiteral` | `true` ↔ `false` |
+| `NullCoalescing` | `??` removal |
+| `RemoveConditional` | removes `if` condition |
 
 ## Known issues
 

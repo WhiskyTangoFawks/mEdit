@@ -4,7 +4,7 @@
     "test-projects": ["MEditService.Tests/MEditService.Tests.csproj"],
     "concurrency": 10,
     "mutation-level": "Standard",
-    "reporters": ["html", "dots"],
+    "reporters": ["html", "json", "dots"],
     "thresholds": {
       "high": 80,
       "low": 60,

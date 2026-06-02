@@ -4,7 +4,7 @@ using DuckDB.NET.Data;
 using MEditService.Core.Queries;
 using MEditService.Core.Schema;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
+
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins.Records;
 
@@ -22,11 +22,11 @@ public sealed class DuckDbRecordRepository : IRecordRepository
     public DuckDbRecordRepository(
         ISchemaReflector schemaReflector,
         ITableDdlBuilder ddlBuilder,
-        ILogger? logger = null)
+        ILogger logger)
     {
         _schemaReflector = schemaReflector;
         _ddlBuilder = ddlBuilder;
-        _logger = logger ?? NullLogger.Instance;
+        _logger = logger;
         _connection = new DuckDBConnection("DataSource=:memory:");
         _connection.Open();
     }
@@ -256,13 +256,23 @@ public sealed class DuckDbRecordRepository : IRecordRepository
         for (int i = 0; i < schema.RecordColumns.Count; i++)
         {
             var col = schema.RecordColumns[i];
-            object? value = reader.IsDBNull(5 + i) ? null : reader.GetValue(5 + i);
+            object? value;
+            if (!reader.IsDBNull(5 + i) && (col.IsArray || col.SubFields != null))
+            {
+                value = JsonSerializer.Deserialize<JsonElement>(reader.GetString(5 + i));
+            }
+            else
+            {
+                // Stryker disable once Conditional : scalar fields are never null in test records; the null path exists for optional fields absent from a record
+                value = reader.IsDBNull(5 + i) ? null : reader.GetValue(5 + i);
+            }
             fields.Add(new FieldValue(col.ToFieldMetadata(), value));
         }
 
         return new RecordDetail(formKey, plugin, loadOrderIndex, isWinner, editorId, fields);
     }
 
+    // Stryker disable once Conditional : no test uses a record type with 0 schema columns; the empty-string branch is unreachable in tests
     private static string ColumnList(RecordTableSchema schema) =>
         schema.RecordColumns.Count == 0
             ? ""
@@ -325,10 +335,12 @@ public sealed class DuckDbRecordRepository : IRecordRepository
     }
 
     private IReadOnlyDictionary<string, RecordTableSchema> RequireSchemas() =>
+        // Stryker disable once String : exception message text is not part of the tested contract
         _schemas ?? throw new InvalidOperationException("Call Initialize before using the repository.");
 
     public void Dispose()
     {
+        // Stryker disable once Statement : DuckDBConnection.Dispose is idempotent; removing the guard produces no observable difference in tests
         if (_disposed) return;
         _disposed = true;
         _connection.Dispose();

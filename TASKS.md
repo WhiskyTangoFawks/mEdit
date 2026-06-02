@@ -25,41 +25,44 @@
 
 ---
 
-## Phase B — Pending Change Model Redesign
+## Phase B — Pending Change Model Redesign ✓
 
-*Design-first phase. Do not implement Phase 10 (Record Lifecycle) until this design is settled — Phase 10 extends the pending change model and will need to be revised against whatever is decided here.*
+*Design complete. See [ADR-0017](docs/adr/0017-pending-change-model.md) for the full rationale.*
 
-### Open questions to resolve (design work, not implementation)
+**Decisions:**
+- **Storage:** DuckDB session table (`pending_changes`) — same in-process store as the record index, lost on restart, fully SQL-composable for scripts
+- **Granularity:** field-level deltas — one row per `(form_key, plugin, field_path)`; supports per-field revert, per-record revert, and `hasDelta` filtering via plain SQL joins
+- **Merge semantics:** upsert-in-place preserving `old_value` — `ON CONFLICT DO UPDATE SET new_value` leaves `old_value` from the original insert
+- **ChangeGroup revert:** atomic only; `DELETE /changes/{id}` returns 409 for group-owned rows; use `DELETE /changes/group/{id}` instead
+- **UI:** bottom panel tab (not sidebar); tree grouped by plugin then record, with ChangeGroups as a separate section; per-field / per-record / per-group / global revert and save actions
 
-**Storage**
-- Current model: `ConcurrentDictionary` in memory — changes are lost if the backend restarts.
-- DuckDB is not an option for persistence: it is rebuilt from disk on every session load (see ADR-0001).
-- Options: keep in-memory (accept loss), SQLite sidecar file (persist across restarts), or treat loss-on-restart as a feature (forces explicit save discipline).
-- Decision needed: is persistence across backend restarts a requirement? If yes, what stores it?
+Phase 10 is now unblocked.
 
-**Granularity: field delta vs full record snapshot**
-- Current model: one `PendingChange` per `(FormKey, Plugin, FieldPath)` — field-level deltas.
-- Alternative: one pending entry per `(FormKey, Plugin)` storing the full new record state.
-- Field deltas: precise, revertable per-field, displayable as "these specific things changed." Hard to apply multi-field operations atomically.
-- Full record: simpler apply path (just write the whole record), but loses field-level diff visibility and makes partial revert awkward.
-- Decision needed: which model? Or a hybrid (store full record snapshot but track which fields changed)?
+---
 
-**Merge semantics**
-- Current model already upserts: re-editing the same field updates `NewValue` in place, preserving the original `OldValue`. You cannot stack two pending changes for the same field — there is always at most one.
-- This is probably correct. Confirm it is the intended behaviour.
+## Phase B.1 — Migrate PendingChangeService to DuckDB
 
-**Multi-record operations (prerequisite for Phase 10)**
-- Phase 10 introduces `ChangeGroup` — a named group of changes spanning multiple records (e.g. delete + nullify all FormLink references, or renumber a FormKey across all referencing plugins).
-- Design needed: how does a group relate to individual pending changes? Can you revert one change in a group independently, or must the group be reverted atomically?
-- Design needed: how are groups surfaced in the UI — as a collapsible section in the pending changes panel, or as a separate view?
+*Prerequisite for Phase 15 (scripting) and the `hasDelta` filter in Phase 9. Implement before either of those phases.*
 
-**UI**
-- Current: pending changes appear as an extra column in the compare grid for the affected record.
-- For multi-record operations, there is no UI design yet.
-- Design needed: a pending changes panel (sidebar or bottom panel) that shows all staged changes across all records, grouped by plugin and optionally by `ChangeGroup`. Must support per-field revert, per-record revert, per-group revert, and save.
+### Backend
 
-### Deliverable
-A written design (ADR or TASKS note) that answers all five questions above before any implementation begins.
+- [ ] Create `pending_changes` table in DuckDB at session load (in `SessionManager` alongside the existing record tables). Schema from ADR-0017: `id UUID`, `form_key`, `plugin`, `field_path`, `record_type`, `old_value JSON`, `new_value JSON`, `source`, `description`, `changed_at TIMESTAMP`, `group_id UUID NULL`; primary key `(form_key, plugin, field_path)`
+- [ ] Rewrite `PendingChangeService` to read/write `pending_changes` via DuckDB instead of `ConcurrentDictionary`. `IPendingChangeService` interface is unchanged — callers see no difference
+  - `Upsert`: `INSERT INTO pending_changes ... ON CONFLICT (form_key, plugin, field_path) DO UPDATE SET new_value = excluded.new_value, changed_at = excluded.changed_at` — preserves `old_value` from original insert
+  - `GetChanges`: `SELECT * FROM pending_changes` with optional `WHERE plugin=?` / `WHERE form_key=?`
+  - `GetPendingFields`: `SELECT field_path, new_value FROM pending_changes WHERE form_key=? AND plugin=?`
+  - `Revert(Guid)`: `DELETE FROM pending_changes WHERE id=?`
+  - `Revert(plugin, formKey)`: `DELETE FROM pending_changes WHERE plugin=? AND form_key=?`
+  - `DrainForPlugin`: `DELETE FROM pending_changes WHERE plugin=? RETURNING *`
+- [ ] Drop `pending_changes` table on session end / session reload (same lifecycle as record tables)
+- [ ] Inject `IDuckDbConnectionFactory` (or the existing session DuckDB connection) into `PendingChangeService` — remove the `ConcurrentDictionary` field entirely
+
+### Tests
+
+- [ ] All existing `PendingChangeService` unit tests pass against the DuckDB-backed implementation
+- [ ] Upsert preserves `OldValue` across multiple edits to the same field
+- [ ] `DrainForPlugin` removes rows and returns them atomically
+- [ ] Two concurrent upserts to different fields on the same record do not deadlock (DuckDB write serialisation)
 
 ---
 

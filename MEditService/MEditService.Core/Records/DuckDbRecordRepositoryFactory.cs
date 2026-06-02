@@ -1,5 +1,6 @@
 using MEditService.Core.Schema;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Mutagen.Bethesda;
 
 namespace MEditService.Core.Records;
@@ -8,7 +9,7 @@ public sealed class DuckDbRecordRepositoryFactory : IRecordRepositoryFactory
 {
     private readonly ISchemaReflector _schemaReflector;
     private readonly ITableDdlBuilder _ddlBuilder;
-    private readonly ILogger? _logger;
+    private readonly ILogger _logger;
 
     public DuckDbRecordRepositoryFactory(
         ISchemaReflector schemaReflector,
@@ -17,7 +18,7 @@ public sealed class DuckDbRecordRepositoryFactory : IRecordRepositoryFactory
     {
         _schemaReflector = schemaReflector;
         _ddlBuilder = ddlBuilder;
-        _logger = logger;
+        _logger = (ILogger?)logger ?? NullLogger.Instance;
     }
 
     public IRecordRepository Create(GameRelease gameRelease)
