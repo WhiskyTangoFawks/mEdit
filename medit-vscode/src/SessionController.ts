@@ -8,10 +8,14 @@ export interface SessionControllerDeps {
   setStatusText: (text: string) => void;
   showWarning: (msg: string) => void;
   showError: (msg: string) => void;
+  log?: (msg: string) => void;
 }
 
 export class SessionController {
-  constructor(private readonly deps: SessionControllerDeps) {}
+  private readonly log: (msg: string) => void;
+  constructor(private readonly deps: SessionControllerDeps) {
+    this.log = deps.log ?? (() => {});
+  }
 
   async getPlugins(): Promise<PluginMetadata[]> {
     const { data } = await this.deps.client.GET('/plugins', {});
@@ -22,6 +26,7 @@ export class SessionController {
     const { response } = await this.deps.client.POST('/plugins/create', { body: { name } });
     if (!response.ok) {
       const text = await response.text();
+      this.log(`[SessionController] createPlugin failed (${response.status}): ${text}`);
       this.deps.showError(`mEdit: Failed to create plugin — ${text}`);
       return;
     }
@@ -35,6 +40,7 @@ export class SessionController {
     );
     if (!response.ok) {
       const text = await response.text();
+      this.log(`[SessionController] copyRecordTo failed (${response.status}): ${text}`);
       this.deps.showError(`mEdit: Copy failed — ${text}`);
       return;
     }

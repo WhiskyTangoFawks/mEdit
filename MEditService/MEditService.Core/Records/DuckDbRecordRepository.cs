@@ -1,8 +1,8 @@
 using System.Data;
 using System.Text.Json;
+using DuckDB.NET.Data;
 using MEditService.Core.Queries;
 using MEditService.Core.Schema;
-using DuckDB.NET.Data;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Mutagen.Bethesda;
@@ -316,11 +316,11 @@ public sealed class DuckDbRecordRepository : IRecordRepository
         {
             case "BOOLEAN": row.AppendValue((bool?)Convert.ToBoolean(value)); break;
             case "INTEGER": row.AppendValue((int?)Convert.ToInt32(value)); break;
-            case "BIGINT":  row.AppendValue((long?)Convert.ToInt64(value)); break;
-            case "FLOAT":   row.AppendValue((float?)Convert.ToSingle(value)); break;
-            case "DOUBLE":  row.AppendValue((double?)Convert.ToDouble(value)); break;
+            case "BIGINT": row.AppendValue((long?)Convert.ToInt64(value)); break;
+            case "FLOAT": row.AppendValue((float?)Convert.ToSingle(value)); break;
+            case "DOUBLE": row.AppendValue((double?)Convert.ToDouble(value)); break;
             case "VARCHAR": row.AppendValue(value.ToString() ?? ""); break;
-            default:        row.AppendValue(JsonSerializer.Serialize(value)); break;
+            default: row.AppendValue(JsonSerializer.Serialize(value)); break;
         }
     }
 

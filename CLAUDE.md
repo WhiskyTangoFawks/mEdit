@@ -21,7 +21,7 @@ A VS Code extension + local C# service for viewing, editing, and comparing Bethe
 - Backend and extension are always started independently by the user. The extension never spawns the backend process — it polls `GET /health` until the backend is up, then emits `attached`. If the backend is not running, the status bar says so and the user starts it manually.
 - The architecture must support all Mutagen-supported games (releases) without code changes, tests may use FO4 as the concrete game.
 
-For rationale and alternatives considered, see [ARCHITECTURE.md](ARCHITECTURE.md).
+For rationale and alternatives considered, see [docs/adr/](docs/adr/). For the full frontend functional design (tree surfaces, record editor, field rendering rules), see [docs/UI_SPEC.md](docs/UI_SPEC.md).
 
 ## MEditService.Core Folder Structure
 
@@ -69,10 +69,13 @@ Each module owns one responsibility. `extension.ts` is the composition root — 
 - **Context menu actions** are declared statically in `package.json`. Which actions are available for a specific item is controlled by the `contextValue` of the tree node, which is set from backend-returned metadata. The backend decides what's allowed; the frontend decides how to present it.
 - **New commands** follow this pattern: prompt the user in `extension.ts`, then call a `SessionController` method with explicit arguments. The controller method has no VS Code dependency and can be called directly by MCP tools.
 - **New data queries** go through `PluginRepository`. Add a method to the `PluginRepository` interface, implement it in `ApiPluginRepository`, and test `ApiPluginRepository` without VS Code.
+- **Before adding any new UI surface** (tree node type, context menu item, field cell type, panel tab, toolbar button), read [`docs/UI_SPEC.md`](docs/UI_SPEC.md) first. It is the canonical description of what every surface shows, what interactions it supports, and what data drives it. If the spec does not cover what you are building, add the surface description to `UI_SPEC.md` before implementing it — spec first, code second.
 
 ## References
 
 `Mutagen/` contains a local clone of the [Mutagen](https://github.com/Mutagen-Modding/Mutagen) source, checked in for API reference only. Grep it to verify type names, method signatures, and interface hierarchies before using them. Do not modify mutagen files.
+
+`TES5Edit/` contains a local clone of the [TES5Edit / xEdit](https://github.com/TES5Edit/TES5Edit) source (Pascal), checked in for reference only. Use it to look up record/field definitions (in `wbDefinitionsFO4.pas` and related files), understand which arrays are sorted (`wbArrayS` = sorted, `wbArray` = unsorted), and verify struct layouts. Do not modify TES5Edit files.
 
 ### Mutagen Documentation (`Mutagen/docs/`)
 
@@ -186,10 +189,37 @@ Use this checklist when adding any user-facing action, whether triggered from th
 - If the new module imports from `vscode`, add `vi.mock('vscode', ...)` at the top of its test file — see `PluginTreeProvider.test.ts` for the mock shape.
 - Add the new command ID to `EXPECTED_COMMANDS` in `src/test/integration/extension.test.ts` and run `npm run test:integration` to confirm it's registered.
 
+## Validation
+
+Run `/validate` at the end of any task. It sequences all gates in order and tells you when to stop.
+
+Individual skills for when you need a single gate:
+- `/lint-backend` — C# formatting (`dotnet format`) + analyzer diagnostics (`dotnet build` with Roslynator.Analyzers)
+- `/mutation-test` — Stryker mutation tests scoped to changed files
+
 ## Conventions
 
 ### Test-Driven Development
 Always do /test-driven-development when fixing bugs to developing new features.
+
+### Logging Standards
+
+**C# backend (Serilog, rolling file to `%LOCALAPPDATA%/mEdit/logs/`)**
+
+- Every endpoint catch block must call `_logger.LogError(ex, "...")` before returning `Results.Problem(ex.Message)`. Never return `ex.ToString()` to the client (stack trace leak). Never return from a catch block without logging.
+- Best-effort catches (backup pruning, I/O cleanup) use `_logger.LogWarning(ex, "...")` — no silent `catch { }`. Exception: per-call property accessor lambdas in `SchemaReflector` (which run on every record read) stay silent to avoid log noise.
+- Use structured properties, not interpolation: `_logger.LogInformation("Indexed {Count} records for {Plugin}", n, name)`.
+- `LogInformation` for state transitions (session loaded, plugin indexed). `LogDebug` for per-record/per-column trace — off by default.
+
+**TypeScript extension**
+
+- A single `vscode.OutputChannel` named `'mEdit'` is created in `extension.ts` and passed to every module that makes HTTP calls or handles async errors.
+- All `catch` blocks log to the OutputChannel before showing UI (`showErrorMessage`) or swallowing. No silent `catch { }` or `catch { return [] }` without a log line.
+- `PluginTreeProvider` shows an error tree node instead of an empty list when a fetch fails.
+
+**Webview**
+
+- All async operations (`handleSave`, `handleRevert`, `handleCopyTo`, etc.) must check `resp.ok` and set error state on failure. Fire-and-forget fetches are not allowed.
 
 ## Manual Testing
 Use `/manual-test` to run the full manual test sequence.

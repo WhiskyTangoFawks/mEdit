@@ -7,8 +7,9 @@ public static class SessionEndpoints
 {
     public static IEndpointRouteBuilder MapSessionEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapPost("/session/load", (SessionLoadRequest req, ISessionManager sessionManager) =>
+        app.MapPost("/session/load", (SessionLoadRequest req, ISessionManager sessionManager, ILoggerFactory loggerFactory) =>
         {
+            var logger = loggerFactory.CreateLogger(nameof(SessionEndpoints));
             if (!Directory.Exists(req.DataFolderPath))
                 return Results.Problem($"Data folder not found: {req.DataFolderPath}", statusCode: 400);
             if (!File.Exists(req.PluginsTxtPath))
@@ -24,7 +25,8 @@ public static class SessionEndpoints
             }
             catch (Exception ex)
             {
-                return Results.Problem(ex.ToString(), statusCode: 500);
+                logger.LogError(ex, "Failed to load session for {DataFolder}", req.DataFolderPath);
+                return Results.Problem(ex.Message, statusCode: 500);
             }
         })
         .WithName("LoadSession")

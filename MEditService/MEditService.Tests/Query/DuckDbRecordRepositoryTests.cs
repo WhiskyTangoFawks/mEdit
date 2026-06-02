@@ -137,7 +137,7 @@ public class DuckDbRecordRepositoryTests : IClassFixture<TestPluginFixture>
 
             var modB = new Fallout4Mod(ModKey.FromFileName("PluginB.esp"), Fallout4Release.Fallout4);
             modB.ModHeader.MasterReferences.Add(new MasterReference
-                { Master = ModKey.FromFileName("PluginA.esm") });
+            { Master = ModKey.FromFileName("PluginA.esm") });
             modB.Npcs.Set(modALoaded.EnumerateMajorRecords<INpcGetter>().First().DeepCopy());
 
             using var repo = new DuckDbRecordRepository(_reflector, _ddl);

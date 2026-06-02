@@ -4,6 +4,9 @@ export interface FieldMetadata {
   isArray: boolean;
   validFormKeyTypes: string[];
   enumValues: string[];
+  elementType?: FieldMetadata;   // present when type === 'array'
+  fields?: FieldMetadata[];       // present when type === 'struct'
+  isSortable?: boolean;           // on elementType: true for pure FormLink arrays
 }
 
 export interface FieldValue {

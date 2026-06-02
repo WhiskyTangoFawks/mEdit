@@ -23,8 +23,9 @@ public static class PluginEndpoints
             .WithTags("Plugins")
             .Produces<IReadOnlyList<PluginRecordTypeCount>>();
 
-        app.MapPost("/plugins/create", (CreatePluginRequest req, ISessionManager sessionManager) =>
+        app.MapPost("/plugins/create", (CreatePluginRequest req, ISessionManager sessionManager, ILoggerFactory loggerFactory) =>
         {
+            var logger = loggerFactory.CreateLogger(nameof(PluginEndpoints));
             if (string.IsNullOrWhiteSpace(req.Name))
                 return Results.Problem("Plugin name is required.", statusCode: 400);
 
@@ -35,14 +36,17 @@ public static class PluginEndpoints
             }
             catch (ArgumentException ex)
             {
+                logger.LogError(ex, "Invalid argument creating plugin {Name}", req.Name);
                 return Results.Problem(ex.Message, statusCode: 400);
             }
             catch (System.IO.IOException ex)
             {
+                logger.LogError(ex, "IO error creating plugin {Name}", req.Name);
                 return Results.Problem(ex.Message, statusCode: 409);
             }
             catch (InvalidOperationException ex)
             {
+                logger.LogError(ex, "No session when creating plugin {Name}", req.Name);
                 return Results.Problem(ex.Message, statusCode: 503);
             }
         })

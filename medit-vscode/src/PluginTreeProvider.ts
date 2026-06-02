@@ -66,8 +66,11 @@ export class PluginTreeProvider implements vscode.TreeDataProvider<PluginTreeNod
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private readonly pageCache: PageCache = new Map();
+  private readonly log: (msg: string) => void;
 
-  constructor(private readonly repository: PluginRepository) {}
+  constructor(private readonly repository: PluginRepository, log?: (msg: string) => void) {
+    this.log = log ?? (() => {});
+  }
 
   refresh(): void {
     this.pageCache.clear();
@@ -97,8 +100,8 @@ export class PluginTreeProvider implements vscode.TreeDataProvider<PluginTreeNod
         items: [...cached.items, ...result.items],
         total: result.total,
       });
-    } catch {
-      // leave cache as-is
+    } catch (e) {
+      this.log(`[PluginTreeProvider] loadMore(${parent.plugin}, ${parent.recordType}) failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     this._onDidChangeTreeData.fire(parent);
   }
@@ -111,7 +114,8 @@ export class PluginTreeProvider implements vscode.TreeDataProvider<PluginTreeNod
     try {
       const plugins = await this.repository.getPlugins();
       return plugins.map(p => new PluginNode(p));
-    } catch {
+    } catch (e) {
+      this.log(`[PluginTreeProvider] fetchPlugins failed: ${e instanceof Error ? e.message : String(e)}`);
       return [];
     }
   }
@@ -120,7 +124,8 @@ export class PluginTreeProvider implements vscode.TreeDataProvider<PluginTreeNod
     try {
       const types = await this.repository.getRecordTypes(node.plugin.name);
       return types.map(t => new RecordTypeNode(node.plugin.name, t.type, t.count));
-    } catch {
+    } catch (e) {
+      this.log(`[PluginTreeProvider] fetchRecordTypes(${node.plugin.name}) failed: ${e instanceof Error ? e.message : String(e)}`);
       return [];
     }
   }
@@ -132,7 +137,8 @@ export class PluginTreeProvider implements vscode.TreeDataProvider<PluginTreeNod
       try {
         cached = await this.repository.getRecords(node.plugin, node.recordType, 0, PAGE_SIZE);
         this.pageCache.set(cacheKey, cached);
-      } catch {
+      } catch (e) {
+        this.log(`[PluginTreeProvider] fetchRecords(${node.plugin}, ${node.recordType}) failed: ${e instanceof Error ? e.message : String(e)}`);
         return [];
       }
     }

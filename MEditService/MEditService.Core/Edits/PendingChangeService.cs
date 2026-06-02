@@ -38,7 +38,7 @@ public sealed class PendingChangeService : IPendingChangeService
     public IReadOnlyList<PendingChange> GetChanges(string? plugin = null, string? formKey = null)
     {
         var values = _changes.Values.AsEnumerable();
-        if (plugin != null)  values = values.Where(c => c.Plugin  == plugin);
+        if (plugin != null) values = values.Where(c => c.Plugin == plugin);
         if (formKey != null) values = values.Where(c => c.FormKey == formKey);
         return values.OrderBy(c => c.ChangedAt).ToList();
     }
@@ -62,7 +62,7 @@ public sealed class PendingChangeService : IPendingChangeService
     {
         var toRemove = _changes
             .Where(kv =>
-                (plugin  == null || kv.Value.Plugin  == plugin) &&
+                (plugin == null || kv.Value.Plugin == plugin) &&
                 (formKey == null || kv.Value.FormKey == formKey))
             .Select(kv => kv.Key)
             .ToList();

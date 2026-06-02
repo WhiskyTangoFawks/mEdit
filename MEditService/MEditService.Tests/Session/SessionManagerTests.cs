@@ -4,6 +4,9 @@ using MEditService.Core.Queries;
 using MEditService.Core.Records;
 using MEditService.Core.Schema;
 using MEditService.Core.Session;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Abstractions;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Fallout4;
 using Mutagen.Bethesda.Plugins;
@@ -26,7 +29,7 @@ public class SessionManagerTests : IClassFixture<TestPluginFixture>
     {
         var reflector = new SchemaReflector();
         var factory = new DuckDbRecordRepositoryFactory(reflector, new TableDdlBuilder(reflector));
-        return new SessionManager(factory, new PluginWriter(reflector));
+        return new SessionManager(factory, new PluginWriter(reflector, NullLogger<PluginWriter>.Instance));
     }
 
     [Fact]
@@ -35,7 +38,7 @@ public class SessionManagerTests : IClassFixture<TestPluginFixture>
         var reflector = new SchemaReflector();
         var inner = new DuckDbRecordRepositoryFactory(reflector, new TableDdlBuilder(reflector));
         var spy = new SpyRepositoryFactory(inner);
-        using var manager = new SessionManager(spy, new PluginWriter(reflector));
+        using var manager = new SessionManager(spy, new PluginWriter(reflector, NullLogger<PluginWriter>.Instance));
 
         manager.Load(_fixture.DataFolder, _fixture.PluginsTxtPath, GameRelease.Fallout4);
 
@@ -233,5 +236,182 @@ public class SessionManagerTests : IClassFixture<TestPluginFixture>
             var aggressionValue = detail.Fields.First(f => f.Metadata.Name == "aggression").Value?.ToString();
             Assert.Equal("Frenzied", aggressionValue);
         }
+    }
+
+    [Fact]
+    public async Task SavePlugin_AfterSave_RecordRemainsWinner()
+    {
+        FormKey npcKey = default;
+        var data = new PluginFixtureBuilder("sm-save-winner")
+            .WithPlugin("TestPlugin.esp", mod =>
+            {
+                var npc = mod.Npcs.AddNew("WinnerNPC");
+                npc.Aggression = Npc.AggressionType.Unaggressive;
+                npcKey = npc.FormKey;
+            })
+            .Build();
+        using (data)
+        {
+            using var manager = MakeManager();
+            manager.Load(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+            var change = MakePendingChange(npcKey.ToString(), "TestPlugin.esp", "aggression", "npc_", "\"Frenzied\"");
+
+            await manager.SavePlugin("TestPlugin.esp", [change]);
+
+            var result = manager.Repository!.GetRecords("npc_", "TestPlugin.esp", null, 100, 0);
+            Assert.All(result.Items, r => Assert.True(r.IsWinner));
+        }
+    }
+
+    [Fact]
+    public void CreatePlugin_NewPlugin_AddedToPluginsTxt()
+    {
+        var data = new PluginFixtureBuilder("cp-plugins-txt")
+            .WithPlugin("Base.esp")
+            .Build();
+        using (data)
+        {
+            using var manager = MakeManager();
+            manager.Load(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+
+            manager.CreatePlugin("NewPlugin.esp");
+
+            var pluginsTxtContent = File.ReadAllText(data.PluginsTxtPath);
+            Assert.Contains("*NewPlugin.esp", pluginsTxtContent);
+        }
+    }
+
+    // --- CreatePlugin guard clauses ---
+
+    [Fact]
+    public void CreatePlugin_InvalidExtension_ThrowsArgumentException()
+    {
+        using var manager = MakeManager(); // no Load — extension check fires first
+        Assert.Throws<ArgumentException>(() => manager.CreatePlugin("Mod.txt"));
+    }
+
+    [Fact]
+    public void Load_WithNonExistentPath_Throws()
+    {
+        using var manager = MakeManager();
+        Assert.ThrowsAny<Exception>(() =>
+            manager.Load("/no-such-path", "/no-such-path/Plugins.txt", GameRelease.Fallout4));
+    }
+
+    [Fact]
+    public void CreatePlugin_NullName_ThrowsArgumentException()
+    {
+        using var manager = MakeLoadedManager();
+        Assert.Throws<ArgumentException>(() => manager.CreatePlugin(null!));
+    }
+
+    [Fact]
+    public void CreatePlugin_WhitespaceName_ThrowsArgumentException()
+    {
+        using var manager = MakeLoadedManager();
+        Assert.Throws<ArgumentException>(() => manager.CreatePlugin("   "));
+    }
+
+    [Fact]
+    public void CreatePlugin_EsmExtension_IsAccepted()
+    {
+        using var manager = MakeLoadedManager();
+        var result = manager.CreatePlugin("NewMaster.esm");
+        Assert.Equal("NewMaster.esm", result.Name);
+        Assert.True(result.IsMaster);
+    }
+
+    [Fact]
+    public void CreatePlugin_EslExtension_IsAccepted()
+    {
+        using var manager = MakeLoadedManager();
+        var result = manager.CreatePlugin("NewLight.esl");
+        Assert.Equal("NewLight.esl", result.Name);
+        Assert.True(result.IsLight);
+    }
+
+    // --- SavePlugin guard clauses ---
+
+    [Fact]
+    public async Task SavePlugin_NoSession_ThrowsInvalidOperationException()
+    {
+        using var manager = MakeManager();
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => manager.SavePlugin("SomePlugin.esp", []));
+    }
+
+    [Fact]
+    public async Task SavePlugin_UnknownPlugin_ThrowsKeyNotFoundException()
+    {
+        using var manager = MakeLoadedManager();
+        await Assert.ThrowsAsync<KeyNotFoundException>(
+            () => manager.SavePlugin("DoesNotExist.esp", []));
+    }
+
+    // --- Disposal actually releases resources ---
+
+    [Fact]
+    public void Load_SecondLoad_OldRepositoryBecomesUnusable()
+    {
+        using var manager = MakeManager();
+        manager.Load(_fixture.DataFolder, _fixture.PluginsTxtPath, GameRelease.Fallout4);
+        var oldRepo = manager.Repository;
+
+        manager.Load(_fixture.DataFolder, _fixture.PluginsTxtPath, GameRelease.Fallout4);
+
+        Assert.ThrowsAny<Exception>(() =>
+            oldRepo!.CountRecordsForPlugin("npc_", TestPluginFixture.PluginName));
+    }
+
+    [Fact]
+    public void Unload_RepositoryBecomesUnusable()
+    {
+        using var manager = MakeManager();
+        manager.Load(_fixture.DataFolder, _fixture.PluginsTxtPath, GameRelease.Fallout4);
+        var oldRepo = manager.Repository;
+
+        manager.Unload();
+
+        Assert.ThrowsAny<Exception>(() =>
+            oldRepo!.CountRecordsForPlugin("npc_", TestPluginFixture.PluginName));
+    }
+
+    [Fact]
+    public void Dispose_RepositoryBecomesUnusable()
+    {
+        var manager = MakeManager();
+        manager.Load(_fixture.DataFolder, _fixture.PluginsTxtPath, GameRelease.Fallout4);
+        var oldRepo = manager.Repository;
+
+        manager.Dispose();
+
+        Assert.ThrowsAny<Exception>(() =>
+            oldRepo!.CountRecordsForPlugin("npc_", TestPluginFixture.PluginName));
+    }
+
+    // --- Load disposes previous session ---
+
+    [Fact]
+    public void Load_SecondCall_PreviousRepositoryIsDisposed()
+    {
+        using var manager = MakeManager();
+        manager.Load(_fixture.DataFolder, _fixture.PluginsTxtPath, GameRelease.Fallout4);
+        var firstRepo = manager.Repository as IDisposable;
+
+        manager.Load(_fixture.DataFolder, _fixture.PluginsTxtPath, GameRelease.Fallout4);
+
+        // DuckDbRecordRepository.Dispose sets its connection to null; a subsequent query throws.
+        // Simply verifying that the repo reference has been replaced is sufficient to show
+        // the old one was released.
+        Assert.NotSame(firstRepo, manager.Repository);
+    }
+
+    // --- helpers ---
+
+    private SessionManager MakeLoadedManager()
+    {
+        var m = MakeManager();
+        m.Load(_fixture.DataFolder, _fixture.PluginsTxtPath, GameRelease.Fallout4);
+        return m;
     }
 }

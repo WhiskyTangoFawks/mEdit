@@ -4,6 +4,11 @@ using MEditService.Core.Queries;
 using MEditService.Core.Records;
 using MEditService.Core.Schema;
 using MEditService.Core.Session;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Abstractions;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Fallout4;
 using Mutagen.Bethesda.Plugins;
@@ -20,10 +25,10 @@ public sealed class EditOrchestratorTests
     {
         var reflector = new SchemaReflector();
         var factory = new DuckDbRecordRepositoryFactory(reflector, new TableDdlBuilder(reflector));
-        var manager = new SessionManager(factory, new PluginWriter(reflector));
+        var manager = new SessionManager(factory, new PluginWriter(reflector, NullLogger<PluginWriter>.Instance));
         var changes = new PendingChangeService();
         var query = new RecordQueryService(manager, changes, reflector, new ConflictClassifier());
-        var writer = new PluginWriter(reflector);
+        var writer = new PluginWriter(reflector, NullLogger<PluginWriter>.Instance);
         var orchestrator = new EditOrchestrator(manager, query, writer, changes);
         return (orchestrator, manager);
     }
@@ -93,7 +98,7 @@ public sealed class EditOrchestratorTests
             var reflector = new SchemaReflector();
             var changes = new PendingChangeService();
             var query = new RecordQueryService(sessionStub, changes, reflector, new ConflictClassifier());
-            var writer = new PluginWriter(reflector);
+            var writer = new PluginWriter(reflector, NullLogger<PluginWriter>.Instance);
             var orchestrator = new EditOrchestrator(sessionStub, query, writer, changes);
 
             var fields = new Dictionary<string, JsonElement> { ["aggression"] = J("\"Frenzied\"") };
@@ -210,7 +215,7 @@ public sealed class EditOrchestratorTests
             var reflector = new SchemaReflector();
             var changes = new PendingChangeService();
             var query = new RecordQueryService(sessionStub, changes, reflector, new ConflictClassifier());
-            var writer = new PluginWriter(reflector);
+            var writer = new PluginWriter(reflector, NullLogger<PluginWriter>.Instance);
             var orchestrator = new EditOrchestrator(sessionStub, query, writer, changes);
 
             var result = orchestrator.CopyRecordTo(npcKey.ToString(), "Source.esp", "user");
@@ -230,14 +235,14 @@ public sealed class EditOrchestratorTests
     {
         private readonly SessionManager _inner;
         private readonly string _immutablePlugin;
-        private IGameSession? _stubSession;
+        private readonly IGameSession? _stubSession;
 
         public StubSessionManagerWithImmutablePlugin(
             string dataFolder, string pluginsTxtPath, GameRelease gameRelease, string immutablePlugin)
         {
             var reflector = new SchemaReflector();
             var factory = new DuckDbRecordRepositoryFactory(reflector, new TableDdlBuilder(reflector));
-            _inner = new SessionManager(factory, new PluginWriter(reflector));
+            _inner = new SessionManager(factory, new PluginWriter(reflector, NullLogger<PluginWriter>.Instance));
             _immutablePlugin = immutablePlugin;
             _inner.Load(dataFolder, pluginsTxtPath, gameRelease);
             _stubSession = new ImmutableOverrideSession(_inner.Session!, immutablePlugin);

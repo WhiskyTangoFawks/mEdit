@@ -1,6 +1,7 @@
 using System.Text.Json;
 using MEditService.Core.Edits;
 using MEditService.Core.Schema;
+using Microsoft.Extensions.Logging.Abstractions;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Fallout4;
 using Mutagen.Bethesda.Plugins;
@@ -165,7 +166,7 @@ public class PluginWriterApplyTests
     public async Task SaveAsync_WritableField_AppearsInApplied()
     {
         var (pluginPath, npcKey) = BuildFixture();
-        var writer = new PluginWriter(_reflector);
+        var writer = new PluginWriter(_reflector, NullLogger<PluginWriter>.Instance);
         var change = MakeChange(npcKey, "aggression", "\"Frenzied\"");
 
         var result = await writer.SaveAsync(pluginPath, [change], GameRelease.Fallout4);
@@ -180,7 +181,7 @@ public class PluginWriterApplyTests
     public async Task SaveAsync_FormLinkField_AppearsInReadOnly()
     {
         var (pluginPath, npcKey) = BuildFixture();
-        var writer = new PluginWriter(_reflector);
+        var writer = new PluginWriter(_reflector, NullLogger<PluginWriter>.Instance);
         var change = MakeChange(npcKey, "race", "\"000001:Fallout4.esm\"");
 
         var result = await writer.SaveAsync(pluginPath, [change], GameRelease.Fallout4);
@@ -194,7 +195,7 @@ public class PluginWriterApplyTests
     public async Task SaveAsync_UnknownField_AppearsInNotFound()
     {
         var (pluginPath, npcKey) = BuildFixture();
-        var writer = new PluginWriter(_reflector);
+        var writer = new PluginWriter(_reflector, NullLogger<PluginWriter>.Instance);
         var change = MakeChange(npcKey, "nonexistent_field", "\"value\"");
 
         var result = await writer.SaveAsync(pluginPath, [change], GameRelease.Fallout4);
@@ -209,28 +210,28 @@ public class PluginWriterApplyTests
     [Fact]
     public void IsReadOnly_FormLinkField_ReturnsTrue()
     {
-        var writer = new PluginWriter(_reflector);
+        var writer = new PluginWriter(_reflector, NullLogger<PluginWriter>.Instance);
         Assert.True(writer.IsReadOnly(GameRelease.Fallout4, "npc_", "race"));
     }
 
     [Fact]
     public void IsReadOnly_BoolField_ReturnsFalse()
     {
-        var writer = new PluginWriter(_reflector);
+        var writer = new PluginWriter(_reflector, NullLogger<PluginWriter>.Instance);
         Assert.False(writer.IsReadOnly(GameRelease.Fallout4, "npc_", "aggro_radius_behavior_enabled"));
     }
 
     [Fact]
     public void IsReadOnly_UnknownRecordType_ReturnsTrue()
     {
-        var writer = new PluginWriter(_reflector);
+        var writer = new PluginWriter(_reflector, NullLogger<PluginWriter>.Instance);
         Assert.True(writer.IsReadOnly(GameRelease.Fallout4, "nonexistent_type", "some_field"));
     }
 
     [Fact]
     public void IsReadOnly_UnknownField_ReturnsTrue()
     {
-        var writer = new PluginWriter(_reflector);
+        var writer = new PluginWriter(_reflector, NullLogger<PluginWriter>.Instance);
         Assert.True(writer.IsReadOnly(GameRelease.Fallout4, "npc_", "nonexistent_field"));
     }
 }

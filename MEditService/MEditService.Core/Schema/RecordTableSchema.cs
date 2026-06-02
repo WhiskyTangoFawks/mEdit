@@ -13,10 +13,12 @@ public sealed record ColumnSpec(
     string[] ValidFormKeyTypes,
     string[] EnumValues,
     Action<IMajorRecord, JsonElement>? Apply,
-    bool IsArray = false)
+    bool IsArray = false,
+    FieldMetadata? ElementType = null,
+    IReadOnlyList<FieldMetadata>? SubFields = null)
 {
     public FieldMetadata ToFieldMetadata() =>
-        new(Name, ApiType, IsArray, ValidFormKeyTypes, EnumValues);
+        new(Name, ApiType, IsArray, ValidFormKeyTypes, EnumValues, ElementType, SubFields);
 }
 
 public sealed class RecordTableSchema

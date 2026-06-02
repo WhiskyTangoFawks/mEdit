@@ -76,7 +76,7 @@ public sealed class ImmutablePluginApiTests : IClassFixture<ImmutablePluginFixtu
         await using var app = new WebApplicationFactory<Program>();
         var client = await LoadedClient(app);
         var formKey = Uri.EscapeDataString(_fixture.UserNpcFormKey.ToString());
-        var target  = Uri.EscapeDataString(ImmutablePluginFixture.ImmutablePluginName);
+        var target = Uri.EscapeDataString(ImmutablePluginFixture.ImmutablePluginName);
 
         var resp = await client.PostAsync($"/records/{formKey}/copy-to/{target}", null);
 

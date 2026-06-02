@@ -1,5 +1,7 @@
 using MEditService.Core.Session;
 using Mutagen.Bethesda;
+using Mutagen.Bethesda.Plugins;
+using Mutagen.Bethesda.Plugins.Records;
 
 namespace MEditService.Tests.Loading;
 
@@ -103,5 +105,137 @@ public sealed class GameSessionTests : IClassFixture<GameSessionImplicitFixture>
     {
         using var session = new GameSession(_fixture.DataFolder, _fixture.PluginsTxtPath, GameRelease.Fallout4);
         Assert.Equal(GameRelease.Fallout4, session.GameRelease);
+    }
+}
+
+// Tests that build their own plugin fixtures inline rather than relying on GameSessionImplicitFixture.
+public sealed class GameSessionPluginMetadataTests
+{
+    // ── Extension flags ────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Plugin_EslExtension_HasIsLightTrue_IsMasterFalse()
+    {
+        using var data = new PluginFixtureBuilder("gs-esl")
+            .WithPlugin("TestMod.esl")
+            .Build();
+        using var session = new GameSession(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+
+        var plugin = session.Plugins.Single(p => p.Name == "TestMod.esl");
+        Assert.True(plugin.IsLight);
+        Assert.False(plugin.IsMaster);
+    }
+
+    [Fact]
+    public void Plugin_EsmExtension_HasIsMasterTrue_IsLightFalse()
+    {
+        using var data = new PluginFixtureBuilder("gs-esm")
+            .WithPlugin("UserMaster.esm")
+            .Build();
+        using var session = new GameSession(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+
+        var plugin = session.Plugins.Single(p => p.Name == "UserMaster.esm");
+        Assert.True(plugin.IsMaster);
+        Assert.False(plugin.IsLight);
+    }
+
+    [Fact]
+    public void Plugin_EspExtension_HasBothFlagsfalse()
+    {
+        using var data = new PluginFixtureBuilder("gs-esp")
+            .WithPlugin("UserPatch.esp")
+            .Build();
+        using var session = new GameSession(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+
+        var plugin = session.Plugins.Single(p => p.Name == "UserPatch.esp");
+        Assert.False(plugin.IsLight);
+        Assert.False(plugin.IsMaster);
+    }
+
+    // ── RecordCount ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Plugin_RecordCount_MatchesActualRecordsInPlugin()
+    {
+        using var data = new PluginFixtureBuilder("gs-rcount")
+            .WithPlugin("WithRecords.esp", mod =>
+            {
+                mod.Npcs.AddNew("Npc1");
+                mod.Npcs.AddNew("Npc2");
+                mod.Npcs.AddNew("Npc3");
+            })
+            .Build();
+        using var session = new GameSession(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+
+        var plugin = session.Plugins.Single(p => p.Name == "WithRecords.esp");
+        Assert.Equal(3, plugin.RecordCount);
+    }
+
+    // ── GetMod ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void GetMod_CaseInsensitive_ReturnsMod()
+    {
+        using var data = new PluginFixtureBuilder("gs-case")
+            .WithPlugin("CaseMod.esp")
+            .Build();
+        using var session = new GameSession(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+
+        Assert.NotNull(session.GetMod("CASEMOD.ESP"));
+        Assert.NotNull(session.GetMod("casemod.esp"));
+        Assert.NotNull(session.GetMod("CaseMod.esp"));
+    }
+
+    [Fact]
+    public void GetMod_UnknownName_ReturnsNull()
+    {
+        using var data = new PluginFixtureBuilder("gs-getmod-null")
+            .WithPlugin("Known.esp")
+            .Build();
+        using var session = new GameSession(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+
+        Assert.Null(session.GetMod("Unknown.esp"));
+    }
+
+    // ── Dispose ────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ListedPlugin_NotOnDisk_SessionLoadsSuccessfullyWithoutIt()
+    {
+        using var data = new PluginFixtureBuilder("gs-missing-listed")
+            .WithPlugin("Present.esp")
+            .Build();
+        File.AppendAllText(data.PluginsTxtPath, "*NonExistent.esp\n");
+
+        using var session = new GameSession(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+
+        Assert.Contains(session.Plugins, p => p.Name == "Present.esp");
+        Assert.DoesNotContain(session.Plugins, p => p.Name == "NonExistent.esp");
+    }
+
+    [Fact]
+    public void LoadedPlugin_FormKeyIsResolvableViaLinkCache()
+    {
+        FormKey npcKey = default;
+        using var data = new PluginFixtureBuilder("gs-linkcache")
+            .WithPlugin("WithNpc.esp", mod => npcKey = mod.Npcs.AddNew("TestNpc").FormKey)
+            .Build();
+
+        using var session = new GameSession(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+
+        Assert.True(session.LinkCache.TryResolve<IMajorRecordGetter>(npcKey, out _));
+    }
+
+    [Fact]
+    public void Dispose_CalledTwice_DoesNotThrow()
+    {
+        using var data = new PluginFixtureBuilder("gs-dispose")
+            .WithPlugin("DisposeTest.esp")
+            .Build();
+        var session = new GameSession(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+        session.Dispose();
+
+        var ex = Record.Exception(() => session.Dispose());
+        Assert.Null(ex);
     }
 }

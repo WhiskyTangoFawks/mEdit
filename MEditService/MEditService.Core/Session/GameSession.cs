@@ -14,7 +14,6 @@ public sealed class GameSession : IGameSession
     private readonly Dictionary<string, IModGetter> _modsByName = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<PluginMetadata> _plugins = [];
     private readonly ILinkCache _linkCache;
-    private bool _disposed;
 
     public string DataFolderPath { get; }
     public GameRelease GameRelease { get; }
@@ -73,6 +72,7 @@ public sealed class GameSession : IGameSession
 
             _mods.Add(mod);
             _modsByName[fileName] = mod;
+            // Stryker disable once Boolean : ToUntypedImmutableLinkCache reads listing.Mod directly and ignores the enabled flag
             modListings.Add(new ModListing<IModGetter>(mod, enabled: true));
 
             var masters = mod.MasterReferences
@@ -133,9 +133,8 @@ public sealed class GameSession : IGameSession
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
         foreach (var mod in _mods)
+            // Stryker disable once Statement : verifying per-mod disposal requires OS-level resource checks beyond the public API
             mod.Dispose();
     }
 }

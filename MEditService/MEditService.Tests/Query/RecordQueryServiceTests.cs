@@ -3,6 +3,7 @@ using MEditService.Core.Queries;
 using MEditService.Core.Records;
 using MEditService.Core.Schema;
 using MEditService.Core.Session;
+using Microsoft.Extensions.Logging.Abstractions;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Fallout4;
 
@@ -17,7 +18,7 @@ public class RecordQueryServiceTests : IClassFixture<TestPluginFixture>, IDispos
     {
         var reflector = new SchemaReflector();
         var factory = new DuckDbRecordRepositoryFactory(reflector, new TableDdlBuilder(reflector));
-        _manager = new SessionManager(factory, new PluginWriter(reflector));
+        _manager = new SessionManager(factory, new PluginWriter(reflector, NullLogger<PluginWriter>.Instance));
         _manager.Load(fixture.DataFolder, fixture.PluginsTxtPath, GameRelease.Fallout4);
         _svc = new RecordQueryService(_manager, new PendingChangeService(), reflector, new ConflictClassifier());
     }
@@ -123,7 +124,7 @@ public class RecordQueryServiceTests : IClassFixture<TestPluginFixture>, IDispos
         Assert.All(detail.Fields, f =>
         {
             Assert.NotEmpty(f.Metadata.Name);
-            Assert.Contains(f.Metadata.Type, new[] { "string", "int", "float", "bool", "enum", "formKey" });
+            Assert.Contains(f.Metadata.Type, new[] { "string", "int", "float", "bool", "enum", "formKey", "array", "struct" });
         });
     }
 
@@ -174,5 +175,120 @@ public class RecordQueryServiceTests : IClassFixture<TestPluginFixture>, IDispos
         var result = _svc.GetPluginRecordTypes("DoesNotExist.esp");
 
         Assert.Empty(result);
+    }
+
+    // --- GET /records?type=unknown ---
+
+    [Fact]
+    public void GetRecords_UnknownType_ReturnsEmptyPagedResult()
+    {
+        var result = _svc.GetRecords(type: "xxxx", plugin: null, search: null, limit: 10, offset: 0);
+
+        Assert.Equal(0, result.Total);
+        Assert.Empty(result.Items);
+    }
+
+    // --- GET /records/{formKey}/plugin/{plugin} ---
+
+    [Fact]
+    public void GetRecordForPlugin_KnownFormKey_ReturnsRecord()
+    {
+        var all = _svc.GetRecords(type: "npc_", plugin: null, search: "TestNPC01", limit: 1, offset: 0);
+        var fk = all.Items[0].FormKey;
+
+        var detail = _svc.GetRecordForPlugin(fk, TestPluginFixture.PluginName);
+
+        Assert.NotNull(detail);
+        Assert.Equal(fk, detail.FormKey);
+        Assert.Equal(TestPluginFixture.PluginName, detail.Plugin);
+    }
+
+    [Fact]
+    public void GetRecordForPlugin_UnknownFormKey_ReturnsNull()
+    {
+        var detail = _svc.GetRecordForPlugin("FFFFFF:Unknown.esp", TestPluginFixture.PluginName);
+
+        Assert.Null(detail);
+    }
+
+    [Fact]
+    public void GetRecordForPlugin_UnknownPlugin_ReturnsNull()
+    {
+        var all = _svc.GetRecords(type: "npc_", plugin: null, search: "TestNPC01", limit: 1, offset: 0);
+        var fk = all.Items[0].FormKey;
+
+        var detail = _svc.GetRecordForPlugin(fk, "NonExistent.esp");
+
+        Assert.Null(detail);
+    }
+
+    // --- GET /records/{formKey}/type ---
+
+    [Fact]
+    public void GetRecordType_KnownFormKey_ReturnsType()
+    {
+        var all = _svc.GetRecords(type: "npc_", plugin: null, search: "TestNPC01", limit: 1, offset: 0);
+        var fk = all.Items[0].FormKey;
+
+        var type = _svc.GetRecordType(fk);
+
+        Assert.Equal("npc_", type);
+    }
+
+    [Fact]
+    public void GetRecordType_UnknownFormKey_ReturnsNull()
+    {
+        var type = _svc.GetRecordType("FFFFFF:Unknown.esp");
+
+        Assert.Null(type);
+    }
+
+    // --- GET /records/{formKey}/compare — with pending changes ---
+
+    [Fact]
+    public void GetCompare_WithPendingChanges_IncludesPendingFieldsInOverride()
+    {
+        var all = _svc.GetRecords(type: "npc_", plugin: null, search: "TestNPC01", limit: 1, offset: 0);
+        var fk = all.Items[0].FormKey;
+
+        // Stage a pending change for this record
+        var changes = new PendingChangeService();
+        var newVal = System.Text.Json.JsonDocument.Parse("\"Frenzied\"").RootElement;
+        changes.Upsert(fk, TestPluginFixture.PluginName, "npc_",
+            new Dictionary<string, System.Text.Json.JsonElement> { ["aggression"] = newVal },
+            "test", null,
+            new Dictionary<string, System.Text.Json.JsonElement>());
+
+        var svcWithChanges = new RecordQueryService(_manager, changes, new SchemaReflector(), new ConflictClassifier());
+        var compare = svcWithChanges.GetCompare(fk);
+
+        Assert.NotNull(compare);
+        var override_ = compare.Overrides.Single(o => o.Plugin == TestPluginFixture.PluginName);
+        Assert.NotNull(override_.PendingFields);
+        Assert.True(override_.PendingFields!.ContainsKey("aggression"));
+    }
+
+    // --- No-session guard clauses ---
+
+    [Fact]
+    public void GetPlugins_NoSession_ThrowsInvalidOperationException()
+    {
+        var unloaded = MakeUnloadedService();
+        Assert.Throws<InvalidOperationException>(() => unloaded.GetPlugins());
+    }
+
+    [Fact]
+    public void GetRecords_NoSession_ThrowsInvalidOperationException()
+    {
+        var unloaded = MakeUnloadedService();
+        Assert.Throws<InvalidOperationException>(() => unloaded.GetRecords("npc_", null, null, 10, 0));
+    }
+
+    private static RecordQueryService MakeUnloadedService()
+    {
+        var reflector = new SchemaReflector();
+        var factory = new DuckDbRecordRepositoryFactory(reflector, new TableDdlBuilder(reflector));
+        var manager = new SessionManager(factory, new PluginWriter(reflector, NullLogger<PluginWriter>.Instance));
+        return new RecordQueryService(manager, new PendingChangeService(), reflector, new ConflictClassifier());
     }
 }

@@ -148,7 +148,7 @@ public class InMemoryRecordRepositoryTests : IClassFixture<TestPluginFixture>
 
         var modB = new Fallout4Mod(ModKey.FromFileName("PluginB.esp"), Fallout4Release.Fallout4);
         modB.ModHeader.MasterReferences.Add(new MasterReference
-            { Master = ModKey.FromFileName("PluginA.esm") });
+        { Master = ModKey.FromFileName("PluginA.esm") });
         var overrideNpc = modALoaded.Npcs.First().DeepCopy();
         modB.Npcs.Set(overrideNpc);
 

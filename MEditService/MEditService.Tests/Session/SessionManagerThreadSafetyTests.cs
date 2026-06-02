@@ -3,6 +3,7 @@ using MEditService.Core.Queries;
 using MEditService.Core.Records;
 using MEditService.Core.Schema;
 using MEditService.Core.Session;
+using Microsoft.Extensions.Logging.Abstractions;
 using Mutagen.Bethesda;
 
 namespace MEditService.Tests.Session;
@@ -17,7 +18,7 @@ public class SessionManagerThreadSafetyTests : IClassFixture<TestPluginFixture>
     {
         var reflector = new SchemaReflector();
         var factory = new DuckDbRecordRepositoryFactory(reflector, new TableDdlBuilder(reflector));
-        return new SessionManager(factory, new PluginWriter(reflector));
+        return new SessionManager(factory, new PluginWriter(reflector, NullLogger<PluginWriter>.Instance));
     }
 
     private SessionManager MakeLoadedManager()

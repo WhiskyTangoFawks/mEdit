@@ -192,6 +192,76 @@ describe('PluginTreeProvider.loadMore', () => {
   });
 });
 
+// ── PluginNode ────────────────────────────────────────────────────────────────
+
+describe('PluginNode', () => {
+  it('has contextValue "plugin" for mutable plugins', () => {
+    const node = new PluginNode({ ...makePlugin(0), isImmutable: false });
+    expect(node.contextValue).toBe('plugin');
+  });
+
+  it('has contextValue "pluginImmutable" for immutable plugins', () => {
+    const node = new PluginNode({ ...makePlugin(0), isImmutable: true });
+    expect(node.contextValue).toBe('pluginImmutable');
+  });
+
+  it('uses plugin name as label', () => {
+    const node = new PluginNode(makePlugin(2));
+    expect(node.label).toBe('Plugin2.esp');
+  });
+
+  it('formats description as "[index] count records"', () => {
+    const plugin = { ...makePlugin(0), loadOrderIndex: 3, recordCount: 1500 };
+    const node = new PluginNode(plugin);
+    expect(node.description).toBe('[3] 1,500 records');
+  });
+
+  it('has a lock ThemeIcon for immutable plugins', () => {
+    const node = new PluginNode({ ...makePlugin(0), isImmutable: true });
+    expect((node.iconPath as { id: string }).id).toBe('lock');
+  });
+
+  it('has no icon for mutable plugins', () => {
+    const node = new PluginNode({ ...makePlugin(0), isImmutable: false });
+    expect(node.iconPath).toBeUndefined();
+  });
+});
+
+// ── RecordTypeNode ────────────────────────────────────────────────────────────
+
+describe('RecordTypeNode', () => {
+  it('uses record type as label', () => {
+    const node = new RecordTypeNode('MyPlugin.esp', 'WEAP', 42);
+    expect(node.label).toBe('WEAP');
+  });
+
+  it('shows formatted count as description', () => {
+    const node = new RecordTypeNode('MyPlugin.esp', 'WEAP', 1234);
+    expect(node.description).toBe('1,234');
+  });
+
+  it('has contextValue "recordType"', () => {
+    const node = new RecordTypeNode('MyPlugin.esp', 'WEAP', 10);
+    expect(node.contextValue).toBe('recordType');
+  });
+});
+
+// ── LoadMoreNode ──────────────────────────────────────────────────────────────
+
+describe('LoadMoreNode', () => {
+  it('label includes remaining count', () => {
+    const parent = new RecordTypeNode('MyPlugin.esp', 'WEAP', 100);
+    const node = new LoadMoreNode(parent, 43);
+    expect(String(node.label)).toContain('43');
+  });
+
+  it('has contextValue "loadMore"', () => {
+    const parent = new RecordTypeNode('MyPlugin.esp', 'WEAP', 100);
+    const node = new LoadMoreNode(parent, 10);
+    expect(node.contextValue).toBe('loadMore');
+  });
+});
+
 // ── RecordNode ────────────────────────────────────────────────────────────────
 
 describe('RecordNode', () => {

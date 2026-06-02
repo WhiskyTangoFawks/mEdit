@@ -14,6 +14,7 @@ export interface BackendManagerOptions {
   statusBar: StatusBarAdapter;
   pollIntervalMs?: number;
   pollTimeoutMs?: number;
+  log?: (msg: string) => void;
 }
 
 export class BackendManager extends EventEmitter {
@@ -21,6 +22,7 @@ export class BackendManager extends EventEmitter {
   private readonly statusBar: StatusBarAdapter;
   private readonly pollIntervalMs: number;
   private readonly pollTimeoutMs: number;
+  private readonly log: (msg: string) => void;
 
   private _isHealthy = false;
 
@@ -30,6 +32,7 @@ export class BackendManager extends EventEmitter {
     this.statusBar = opts.statusBar;
     this.pollIntervalMs = opts.pollIntervalMs ?? 500;
     this.pollTimeoutMs = opts.pollTimeoutMs ?? 30_000;
+    this.log = opts.log ?? (() => {});
 
     this.statusBar.setText('$(loading~spin) mEdit: Connecting…');
     this.statusBar.show();
@@ -52,6 +55,7 @@ export class BackendManager extends EventEmitter {
 
         if (Date.now() >= deadline) {
           this._isHealthy = false;
+          this.log(`[BackendManager] Timed out waiting for backend on port ${this.port}`);
           this.emitStatus('disconnected');
           resolve();
           return;
@@ -73,7 +77,7 @@ export class BackendManager extends EventEmitter {
       const req = http.get(`http://localhost:${this.port}/health`, (res) => {
         resolve(res.statusCode === 200);
       });
-      req.on('error', () => resolve(false));
+      req.on('error', (err) => { this.log(`[BackendManager] Health check error: ${err.message}`); resolve(false); });
     });
   }
 

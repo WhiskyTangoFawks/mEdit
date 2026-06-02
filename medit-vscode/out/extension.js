@@ -45,6 +45,7 @@ var BackendManager = class extends import_node_events.EventEmitter {
   statusBar;
   pollIntervalMs;
   pollTimeoutMs;
+  log;
   _isHealthy = false;
   constructor(opts) {
     super();
@@ -52,6 +53,8 @@ var BackendManager = class extends import_node_events.EventEmitter {
     this.statusBar = opts.statusBar;
     this.pollIntervalMs = opts.pollIntervalMs ?? 500;
     this.pollTimeoutMs = opts.pollTimeoutMs ?? 3e4;
+    this.log = opts.log ?? (() => {
+    });
     this.statusBar.setText("$(loading~spin) mEdit: Connecting\u2026");
     this.statusBar.show();
   }
@@ -71,6 +74,7 @@ var BackendManager = class extends import_node_events.EventEmitter {
         }
         if (Date.now() >= deadline) {
           this._isHealthy = false;
+          this.log(`[BackendManager] Timed out waiting for backend on port ${this.port}`);
           this.emitStatus("disconnected");
           resolve();
           return;
@@ -88,7 +92,10 @@ var BackendManager = class extends import_node_events.EventEmitter {
       const req = http.get(`http://localhost:${this.port}/health`, (res) => {
         resolve(res.statusCode === 200);
       });
-      req.on("error", () => resolve(false));
+      req.on("error", (err) => {
+        this.log(`[BackendManager] Health check error: ${err.message}`);
+        resolve(false);
+      });
     });
   }
   emitStatus(status) {
@@ -702,8 +709,11 @@ var SessionWizard = class {
 var SessionController = class {
   constructor(deps) {
     this.deps = deps;
+    this.log = deps.log ?? (() => {
+    });
   }
   deps;
+  log;
   async getPlugins() {
     const { data } = await this.deps.client.GET("/plugins", {});
     return data ?? [];
@@ -712,6 +722,7 @@ var SessionController = class {
     const { response } = await this.deps.client.POST("/plugins/create", { body: { name } });
     if (!response.ok) {
       const text = await response.text();
+      this.log(`[SessionController] createPlugin failed (${response.status}): ${text}`);
       this.deps.showError(`mEdit: Failed to create plugin \u2014 ${text}`);
       return;
     }
@@ -724,6 +735,7 @@ var SessionController = class {
     );
     if (!response.ok) {
       const text = await response.text();
+      this.log(`[SessionController] copyRecordTo failed (${response.status}): ${text}`);
       this.deps.showError(`mEdit: Copy failed \u2014 ${text}`);
       return;
     }
@@ -813,13 +825,16 @@ var LoadMoreNode = class extends vscode.TreeItem {
   kind = "loadMore";
 };
 var PluginTreeProvider = class {
-  constructor(repository) {
+  constructor(repository, log) {
     this.repository = repository;
+    this.log = log ?? (() => {
+    });
   }
   repository;
   _onDidChangeTreeData = new vscode.EventEmitter();
   onDidChangeTreeData = this._onDidChangeTreeData.event;
   pageCache = /* @__PURE__ */ new Map();
+  log;
   refresh() {
     this.pageCache.clear();
     this._onDidChangeTreeData.fire(void 0);
@@ -848,7 +863,8 @@ var PluginTreeProvider = class {
         items: [...cached.items, ...result.items],
         total: result.total
       });
-    } catch {
+    } catch (e) {
+      this.log(`[PluginTreeProvider] loadMore(${parent.plugin}, ${parent.recordType}) failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     this._onDidChangeTreeData.fire(parent);
   }
@@ -859,7 +875,8 @@ var PluginTreeProvider = class {
     try {
       const plugins = await this.repository.getPlugins();
       return plugins.map((p) => new PluginNode(p));
-    } catch {
+    } catch (e) {
+      this.log(`[PluginTreeProvider] fetchPlugins failed: ${e instanceof Error ? e.message : String(e)}`);
       return [];
     }
   }
@@ -867,7 +884,8 @@ var PluginTreeProvider = class {
     try {
       const types = await this.repository.getRecordTypes(node.plugin.name);
       return types.map((t) => new RecordTypeNode(node.plugin.name, t.type, t.count));
-    } catch {
+    } catch (e) {
+      this.log(`[PluginTreeProvider] fetchRecordTypes(${node.plugin.name}) failed: ${e instanceof Error ? e.message : String(e)}`);
       return [];
     }
   }
@@ -878,7 +896,8 @@ var PluginTreeProvider = class {
       try {
         cached = await this.repository.getRecords(node.plugin, node.recordType, 0, PAGE_SIZE);
         this.pageCache.set(cacheKey, cached);
-      } catch {
+      } catch (e) {
+        this.log(`[PluginTreeProvider] fetchRecords(${node.plugin}, ${node.recordType}) failed: ${e instanceof Error ? e.message : String(e)}`);
         return [];
       }
     }
@@ -916,31 +935,49 @@ function toRecordTypeCount(r) {
   return { type: r.type ?? "", count: r.count ?? 0 };
 }
 var ApiPluginRepository = class {
-  constructor(client) {
+  constructor(client, log) {
     this.client = client;
+    this.log = log ?? (() => {
+    });
   }
   client;
+  log;
   async getPlugins() {
-    const { data } = await this.client.GET("/plugins", {});
-    const raw = data ?? [];
-    return raw.map(toPluginMetadata);
+    try {
+      const { data } = await this.client.GET("/plugins", {});
+      const raw = data ?? [];
+      return raw.map(toPluginMetadata);
+    } catch (e) {
+      this.log(`[PluginRepository] getPlugins failed: ${e instanceof Error ? e.message : String(e)}`);
+      return [];
+    }
   }
   async getRecordTypes(plugin) {
-    const { data } = await this.client.GET("/plugins/{plugin}/record-types", {
-      params: { path: { plugin } }
-    });
-    const raw = data ?? [];
-    return raw.map(toRecordTypeCount);
+    try {
+      const { data } = await this.client.GET("/plugins/{plugin}/record-types", {
+        params: { path: { plugin } }
+      });
+      const raw = data ?? [];
+      return raw.map(toRecordTypeCount);
+    } catch (e) {
+      this.log(`[PluginRepository] getRecordTypes(${plugin}) failed: ${e instanceof Error ? e.message : String(e)}`);
+      return [];
+    }
   }
   async getRecords(plugin, type, offset, limit) {
-    const { data } = await this.client.GET("/records", {
-      params: { query: { plugin, type, offset, limit } }
-    });
-    const raw = data;
-    return {
-      items: (raw?.items ?? []).map(toRecordSummary),
-      total: raw?.total ?? 0
-    };
+    try {
+      const { data } = await this.client.GET("/records", {
+        params: { query: { plugin, type, offset, limit } }
+      });
+      const raw = data;
+      return {
+        items: (raw?.items ?? []).map(toRecordSummary),
+        total: raw?.total ?? 0
+      };
+    } catch (e) {
+      this.log(`[PluginRepository] getRecords(${plugin}, ${type}) failed: ${e instanceof Error ? e.message : String(e)}`);
+      return { items: [], total: 0 };
+    }
   }
 };
 
@@ -964,15 +1001,27 @@ function buildWebviewHtml(params) {
 </html>`;
 }
 
+// src/messages.ts
+var EXTENSION_TO_WEBVIEW = {
+  LOAD_RECORD: "loadRecord"
+};
+var WEBVIEW_TO_EXTENSION = {
+  OPEN_RECORD: "openRecord"
+};
+
 // src/extension.ts
 var backendManager;
 async function activate(context) {
   const cfg = vscode2.workspace.getConfiguration("mEdit");
   const port = cfg.get("backendPort") ?? 5172;
+  const outputChannel = vscode2.window.createOutputChannel("mEdit");
+  context.subscriptions.push(outputChannel);
+  const log = (msg) => outputChannel.appendLine(`[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}`);
   const statusBarItem = vscode2.window.createStatusBarItem(vscode2.StatusBarAlignment.Left, 100);
   context.subscriptions.push(statusBarItem);
   backendManager = new BackendManager({
     port,
+    log,
     statusBar: {
       setText: (t) => {
         statusBarItem.text = t;
@@ -982,10 +1031,11 @@ async function activate(context) {
     }
   });
   const client = createApiClient(port);
-  const treeProvider = new PluginTreeProvider(new ApiPluginRepository(client));
+  const treeProvider = new PluginTreeProvider(new ApiPluginRepository(client, log), log);
   const openPanels = /* @__PURE__ */ new Map();
   const controller = new SessionController({
     client,
+    log,
     makeWizard: () => new SessionWizard({
       client,
       detectPaths: () => {
@@ -1083,7 +1133,7 @@ function openRecordPanel(context, openPanels, title, formKey, port) {
     existing.title = title;
     existing.reveal();
     if (formKey) {
-      existing.webview.postMessage({ type: "loadRecord", formKey });
+      existing.webview.postMessage({ type: EXTENSION_TO_WEBVIEW.LOAD_RECORD, formKey });
     }
     return;
   }
@@ -1096,7 +1146,7 @@ function openRecordPanel(context, openPanels, title, formKey, port) {
   panel.webview.onDidReceiveMessage((msg) => {
     if (typeof msg === "object" && msg !== null && "type" in msg) {
       const m = msg;
-      if (m.type === "openRecord" && m.formKey) {
+      if (m.type === WEBVIEW_TO_EXTENSION.OPEN_RECORD && m.formKey) {
         vscode2.commands.executeCommand("mEdit.openEditor", { formKey: m.formKey, label: m.formKey });
       }
     }

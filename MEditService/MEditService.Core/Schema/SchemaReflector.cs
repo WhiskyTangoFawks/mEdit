@@ -1,7 +1,9 @@
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using MEditService.Core.Queries;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
 using Mutagen.Bethesda.Plugins.Records;
@@ -11,7 +13,6 @@ namespace MEditService.Core.Schema;
 
 public sealed class SchemaReflector : ISchemaReflector
 {
-    // Placed/spatial records excluded from the index: too large or not meaningful to browse.
     private static readonly HashSet<string> _excludedTables = new(StringComparer.OrdinalIgnoreCase)
     {
         "refr", "achr",
@@ -84,11 +85,6 @@ public sealed class SchemaReflector : ISchemaReflector
             "MajorRecordFlagsRaw", "SubgraphRevision"
         };
 
-        // Group by snake_case name and pick the most-derived interface's property.
-        // Interfaces like INamedGetter (string? Name) and ITranslatedNamedGetter
-        // (ITranslatedStringGetter? Name) both expose "name", but only the leaf interface
-        // reflects the real on-disk type. We prefer whichever declaring type is NOT a
-        // base of any other declaring type in the same group (i.e. the most-specific one).
         var grouped = GetAllInterfaceProperties(getterType)
             .Where(p => !baseSkip.Contains(p.Name))
             .GroupBy(p => ToSnakeCase(p.Name), StringComparer.OrdinalIgnoreCase);
@@ -99,14 +95,18 @@ public sealed class SchemaReflector : ISchemaReflector
         {
             var colName = group.Key;
 
-            // Pick the property from the most-derived interface in the group.
             var prop = group.Aggregate((best, candidate) =>
                 best.DeclaringType!.IsAssignableFrom(candidate.DeclaringType!) ? candidate : best);
 
             var info = GetColumnInfo(prop, getterTypeToTable);
             if (info == null) continue;
 
-            columns.Add(new ColumnSpec(colName, prop.Name, info.DuckDbType, info.Extractor, info.ApiType, info.ValidFormKeyTypes, info.EnumValues, info.Apply));
+            columns.Add(new ColumnSpec(
+                colName, prop.Name, info.DuckDbType, info.Extractor, info.ApiType,
+                info.ValidFormKeyTypes, info.EnumValues, info.Apply,
+                IsArray: info.ApiType == "array",
+                ElementType: info.ElementMeta,
+                SubFields: info.SubFieldMetas));
         }
 
         return new RecordTableSchema
@@ -117,13 +117,46 @@ public sealed class SchemaReflector : ISchemaReflector
         };
     }
 
+    // ── ColumnInfoResult ──────────────────────────────────────────────────────
+
     private sealed record ColumnInfoResult(
         string DuckDbType,
         Func<IMajorRecordGetter, object?> Extractor,
         string ApiType,
         string[] ValidFormKeyTypes,
         string[] EnumValues,
-        Action<IMajorRecord, JsonElement>? Apply);
+        Action<IMajorRecord, JsonElement>? Apply,
+        FieldMetadata? ElementMeta = null,
+        IReadOnlyList<FieldMetadata>? SubFieldMetas = null);
+
+    // ── SubFieldSpec (sub-record / array element reflection) ─────────────────
+
+    private sealed record SubFieldSpec(
+        string Name,
+        string ApiType,
+        string[] ValidFormKeyTypes,
+        string[] EnumValues,
+        Func<object, object?> Extract,
+        Action<object, JsonElement>? Apply,
+        IReadOnlyList<SubFieldSpec>? SubFields = null,
+        SubFieldSpec? ElementSpec = null)
+    {
+        public FieldMetadata ToFieldMetadata() =>
+            new(Name, ApiType, false, ValidFormKeyTypes, EnumValues,
+                ElementSpec?.ToFieldMetadata(),
+                SubFields?.Select(s => s.ToFieldMetadata()).ToList());
+    }
+
+    // ── Type-detection helpers ────────────────────────────────────────────────
+
+    private static readonly string[] _empty = [];
+
+    private static readonly HashSet<string> _loquiSkipProps =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            "CommonInstance", "CommonSetterInstance", "CommonSetterTranslationInstance",
+            "StaticRegistration", "Registration",
+        };
 
     private static IEnumerable<PropertyInfo> GetAllInterfaceProperties(Type type)
     {
@@ -135,83 +168,297 @@ public sealed class SchemaReflector : ISchemaReflector
             .SelectMany(i => i.GetProperties(BindingFlags.Public | BindingFlags.Instance));
     }
 
-    private static readonly string[] _empty = [];
+    private static bool IsTranslatedString(Type type) =>
+        typeof(ITranslatedStringGetter).IsAssignableFrom(type);
+
+    private static bool IsFormLink(Type type) =>
+        type.IsInterface && type.IsGenericType &&
+        typeof(IFormLinkGetter).IsAssignableFrom(type);
+
+    // IReadOnlyList<T> only — that's what Mutagen getter interfaces expose for collections.
+    private static bool IsListType(Type type, out Type elementType)
+    {
+        elementType = typeof(object);
+        if (!type.IsGenericType) return false;
+        if (type.GetGenericTypeDefinition() != typeof(IReadOnlyList<>)) return false;
+        elementType = type.GetGenericArguments()[0];
+        return true;
+    }
+
+    // Mutagen Loqui-generated sub-record interfaces always declare a static StaticRegistration.
+    private static bool IsLoquiInterface(Type type) =>
+        type.IsInterface &&
+        !IsFormLink(type) &&
+        type.GetProperty("StaticRegistration", BindingFlags.Public | BindingFlags.Static) != null;
+
+    private static string[] GetFormLinkValidTypes(
+        Type core, IReadOnlyDictionary<Type, string> getterTypeToTable)
+    {
+        var linked = core.IsGenericType ? core.GetGenericArguments()[0] : null;
+        return linked != null && getterTypeToTable.TryGetValue(linked, out var tn)
+            ? [tn] : _empty;
+    }
+
+    // Retrieve the concrete mutable class (e.g. RankPlacement) via ILoquiRegistration.SetterType.
+    private static Type? GetSetterType(Type getterInterface)
+    {
+        try
+        {
+            var regProp = getterInterface.GetProperty(
+                "StaticRegistration", BindingFlags.Public | BindingFlags.Static);
+            var reg = regProp?.GetValue(null);
+            return reg?.GetType().GetProperty("SetterType")?.GetValue(reg) as Type;
+        }
+        catch { return null; }
+    }
+
+    // ── Sub-schema building ───────────────────────────────────────────────────
+
+    private static IReadOnlyList<SubFieldSpec> BuildSubSchema(
+        Type getterInterface,
+        IReadOnlyDictionary<Type, string> getterTypeToTable,
+        int depth = 0)
+    {
+        if (depth > 3) return [];
+
+        var grouped = GetAllInterfaceProperties(getterInterface)
+            .Where(p => !_loquiSkipProps.Contains(p.Name))
+            .GroupBy(p => ToSnakeCase(p.Name), StringComparer.OrdinalIgnoreCase);
+
+        var result = new List<SubFieldSpec>();
+        foreach (var group in grouped)
+        {
+            var prop = group.Aggregate((best, candidate) =>
+                best.DeclaringType!.IsAssignableFrom(candidate.DeclaringType!) ? candidate : best);
+
+            var spec = GetSubFieldInfo(prop, getterTypeToTable, depth + 1);
+            if (spec != null) result.Add(spec);
+        }
+        return result;
+    }
+
+    // Element metadata for use in FieldMetadata.ElementType.
+    private static FieldMetadata? BuildElementMeta(
+        Type elementType, IReadOnlyDictionary<Type, string> getterTypeToTable)
+    {
+        var core = Nullable.GetUnderlyingType(elementType) ?? elementType;
+
+        if (IsFormLink(core))
+            return new FieldMetadata("", "formKey", false,
+                GetFormLinkValidTypes(core, getterTypeToTable), _empty,
+                IsSortable: true);
+
+        if (IsLoquiInterface(core))
+        {
+            var sub = BuildSubSchema(core, getterTypeToTable);
+            if (sub.Count == 0) return null;
+            return new FieldMetadata("", "struct", false, _empty, _empty,
+                Fields: sub.Select(s => s.ToFieldMetadata()).ToList());
+        }
+
+        if (core == typeof(bool)) return new("", "bool", false, _empty, _empty);
+        if (core == typeof(float) || core == typeof(double))
+            return new("", "float", false, _empty, _empty);
+        if (core == typeof(string) || IsTranslatedString(core))
+            return new("", "string", false, _empty, _empty);
+        if (core.IsEnum) return new("", "enum", false, _empty, Enum.GetNames(core));
+        if (core == typeof(byte) || core == typeof(sbyte) ||
+            core == typeof(short) || core == typeof(ushort) ||
+            core == typeof(int) || core == typeof(uint) ||
+            core == typeof(long) || core == typeof(ulong))
+            return new("", "int", false, _empty, _empty);
+        return null;
+    }
+
+    // ── Per-sub-field reflection (operates on object, not IMajorRecordGetter) ─
+
+    private static SubFieldSpec? GetSubFieldInfo(
+        PropertyInfo prop,
+        IReadOnlyDictionary<Type, string> getterTypeToTable,
+        int depth)
+    {
+        if (depth > 3) return null;
+
+        var type = prop.PropertyType;
+        var core = Nullable.GetUnderlyingType(type) ?? type;
+        var nullable = Nullable.GetUnderlyingType(type) != null || !type.IsValueType;
+        var pName = prop.Name;
+        var colName = ToSnakeCase(pName);
+
+        Func<object, object?> Getter() =>
+            obj => { try { return prop.GetValue(obj); } catch { return null; } };
+
+        Action<object, JsonElement> Applier(Func<JsonElement, object?> conv)
+        {
+            var cache = new ConcurrentDictionary<Type, PropertyInfo?>();
+            return (obj, val) =>
+            {
+                var rp = cache.GetOrAdd(obj.GetType(), t =>
+                {
+                    var p = t.GetProperty(pName, BindingFlags.Public | BindingFlags.Instance);
+                    return p is { CanWrite: true } ? p : null;
+                });
+                if (rp == null) return;
+                if (val.ValueKind == JsonValueKind.Null)
+                { if (nullable) rp.SetValue(obj, null); return; }
+                var v = conv(val);
+                if (v != null) rp.SetValue(obj, v);
+            };
+        }
+
+        if (core == typeof(bool)) return new(colName, "bool", _empty, _empty, Getter(), Applier(v => (object)v.GetBoolean()));
+        if (core == typeof(byte)) return new(colName, "int", _empty, _empty, Getter(), Applier(v => (object)(byte)v.GetInt32()));
+        if (core == typeof(sbyte)) return new(colName, "int", _empty, _empty, Getter(), Applier(v => (object)(sbyte)v.GetInt32()));
+        if (core == typeof(short)) return new(colName, "int", _empty, _empty, Getter(), Applier(v => (object)(short)v.GetInt32()));
+        if (core == typeof(ushort)) return new(colName, "int", _empty, _empty, Getter(), Applier(v => (object)(ushort)v.GetInt32()));
+        if (core == typeof(int)) return new(colName, "int", _empty, _empty, Getter(), Applier(v => (object)v.GetInt32()));
+        if (core == typeof(uint)) return new(colName, "int", _empty, _empty, Getter(), Applier(v => (object)v.GetUInt32()));
+        if (core == typeof(long)) return new(colName, "int", _empty, _empty, Getter(), Applier(v => (object)v.GetInt64()));
+        if (core == typeof(ulong)) return new(colName, "int", _empty, _empty, Getter(), Applier(v => (object)v.GetUInt64()));
+        if (core == typeof(float)) return new(colName, "float", _empty, _empty, Getter(), Applier(v => (object)v.GetSingle()));
+        if (core == typeof(double)) return new(colName, "float", _empty, _empty, Getter(), Applier(v => (object)v.GetDouble()));
+        if (core == typeof(string)) return new(colName, "string", _empty, _empty, Getter(), Applier(v => v.GetString()));
+
+        if (IsTranslatedString(core))
+        {
+            var g = Getter();
+            return new(colName, "string", _empty, _empty,
+                obj => { try { return (g(obj) as ITranslatedStringGetter)?.String; } catch { return null; } },
+                Applier(v => new TranslatedString(Language.English, v.GetString())));
+        }
+
+        if (core.IsEnum)
+        {
+            var g = Getter();
+            return new(colName, "enum", _empty, Enum.GetNames(core),
+                obj => g(obj)?.ToString(),
+                Applier(v => Enum.Parse(core, v.GetString() ?? "", ignoreCase: true)));
+        }
+
+        if (IsFormLink(core))
+        {
+            var g = Getter();
+            Action<object, JsonElement> flApply = (obj, val) =>
+            {
+                try
+                {
+                    var rp = obj.GetType().GetProperty(pName, BindingFlags.Public | BindingFlags.Instance);
+                    if (rp == null) return;
+                    if (val.ValueKind == JsonValueKind.Null)
+                    { (rp.GetValue(obj))?.GetType().GetMethod("Clear")?.Invoke(rp.GetValue(obj), []); return; }
+                    var fkStr = val.GetString();
+                    if (fkStr == null || !FormKey.TryFactory(fkStr, out var fk)) return;
+                    var link = rp.GetValue(obj);
+                    link?.GetType().GetMethod("SetTo", [typeof(FormKey)])?.Invoke(link, [fk]);
+                }
+                catch { }
+            };
+            return new(colName, "formKey", GetFormLinkValidTypes(core, getterTypeToTable), _empty,
+                obj => (g(obj) as IFormLinkGetter)?.FormKeyNullable?.ToString(),
+                flApply);
+        }
+
+        if (IsLoquiInterface(core))
+        {
+            var sub = BuildSubSchema(core, getterTypeToTable, depth);
+            if (sub.Count == 0) return null;
+            var g = Getter();
+            return new(colName, "struct", _empty, _empty,
+                obj => { var v = g(obj); return v == null ? null : ExtractSubObject(v, sub); },
+                Apply: null,
+                SubFields: sub);
+        }
+
+        return null;
+    }
+
+    // ── Serialization helpers ─────────────────────────────────────────────────
+
+    private static Dictionary<string, object?> ExtractSubObject(
+        object item, IReadOnlyList<SubFieldSpec> fields)
+    {
+        var dict = new Dictionary<string, object?>();
+        foreach (var f in fields) dict[f.Name] = f.Extract(item);
+        return dict;
+    }
+
+    private static string? SerializeListItems(
+        IEnumerable items, Type elementType, IReadOnlyList<SubFieldSpec>? subFields)
+    {
+        var core = Nullable.GetUnderlyingType(elementType) ?? elementType;
+        var isFl = IsFormLink(core);
+        var result = new List<object?>();
+        foreach (var item in items)
+        {
+            if (item == null) { result.Add(null); continue; }
+            if (isFl) result.Add((item as IFormLinkGetter)?.FormKeyNullable?.ToString());
+            else if (subFields != null) result.Add(ExtractSubObject(item, subFields));
+            else result.Add(item);
+        }
+        return JsonSerializer.Serialize(result);
+    }
+
+    // ── GetColumnInfo ─────────────────────────────────────────────────────────
 
     private static ColumnInfoResult? GetColumnInfo(
         PropertyInfo prop, IReadOnlyDictionary<Type, string> getterTypeToTable)
     {
-        var type       = prop.PropertyType;
-        var core       = Nullable.GetUnderlyingType(type) ?? type;
-        var isNullable = Nullable.GetUnderlyingType(type) != null || !type.IsValueType;
-        var propName   = prop.Name;
+        var type = prop.PropertyType;
+        var core = Nullable.GetUnderlyingType(type) ?? type;
+        var nullable = Nullable.GetUnderlyingType(type) != null || !type.IsValueType;
+        var pName = prop.Name;
 
-        Action<IMajorRecord, JsonElement> MakeApply(Func<JsonElement, object?> converter)
+        Action<IMajorRecord, JsonElement> MakeApply(Func<JsonElement, object?> conv)
         {
             var cache = new ConcurrentDictionary<Type, PropertyInfo?>();
             return (record, value) =>
             {
                 var rp = cache.GetOrAdd(record.GetType(), t =>
                 {
-                    var p = t.GetProperty(propName, BindingFlags.Public | BindingFlags.Instance);
+                    var p = t.GetProperty(pName, BindingFlags.Public | BindingFlags.Instance);
                     return p is { CanWrite: true } ? p : null;
                 });
                 if (rp == null) return;
-
                 if (value.ValueKind == JsonValueKind.Null)
-                {
-                    if (isNullable) rp.SetValue(record, null);
-                    return;
-                }
-
-                var converted = converter(value);
-                if (converted != null) rp.SetValue(record, converted);
+                { if (nullable) rp.SetValue(record, null); return; }
+                var v = conv(value);
+                if (v != null) rp.SetValue(record, v);
             };
         }
 
         if (core == typeof(bool))
             return new("BOOLEAN", r => TryGet(r, prop), "bool", _empty, _empty,
                 MakeApply(v => (object)v.GetBoolean()));
-
         if (core == typeof(byte))
             return new("INTEGER", r => TryGet(r, prop), "int", _empty, _empty,
                 MakeApply(v => (object)(byte)v.GetInt32()));
-
         if (core == typeof(sbyte))
             return new("INTEGER", r => TryGet(r, prop), "int", _empty, _empty,
                 MakeApply(v => (object)(sbyte)v.GetInt32()));
-
         if (core == typeof(short))
             return new("INTEGER", r => TryGet(r, prop), "int", _empty, _empty,
                 MakeApply(v => (object)(short)v.GetInt32()));
-
         if (core == typeof(ushort))
             return new("INTEGER", r => TryGet(r, prop), "int", _empty, _empty,
                 MakeApply(v => (object)(ushort)v.GetInt32()));
-
         if (core == typeof(int))
             return new("INTEGER", r => TryGet(r, prop), "int", _empty, _empty,
                 MakeApply(v => (object)v.GetInt32()));
-
         if (core == typeof(uint))
             return new("INTEGER", r => TryGet(r, prop), "int", _empty, _empty,
                 MakeApply(v => (object)v.GetUInt32()));
-
         if (core == typeof(long))
             return new("BIGINT", r => TryGet(r, prop), "int", _empty, _empty,
                 MakeApply(v => (object)v.GetInt64()));
-
         if (core == typeof(ulong))
             return new("BIGINT", r => TryGet(r, prop), "int", _empty, _empty,
                 MakeApply(v => (object)v.GetUInt64()));
-
         if (core == typeof(float))
             return new("FLOAT", r => TryGet(r, prop), "float", _empty, _empty,
                 MakeApply(v => (object)v.GetSingle()));
-
         if (core == typeof(double))
             return new("DOUBLE", r => TryGet(r, prop), "float", _empty, _empty,
                 MakeApply(v => (object)v.GetDouble()));
-
         if (core == typeof(string))
             return new("VARCHAR", r => TryGet(r, prop), "string", _empty, _empty,
                 MakeApply(v => v.GetString()));
@@ -233,11 +480,151 @@ public sealed class SchemaReflector : ISchemaReflector
 
         if (IsFormLink(core))
         {
-            var linkedType = core.GetGenericArguments().Length > 0 ? core.GetGenericArguments()[0] : null;
-            var validTypes = linkedType != null && getterTypeToTable.TryGetValue(linkedType, out var tn)
-                ? new[] { tn }
-                : _empty;
-            return new("VARCHAR", r => (TryGet(r, prop) as IFormLinkGetter)?.FormKeyNullable?.ToString(), "formKey", validTypes, _empty, null);
+            var validTypes = GetFormLinkValidTypes(core, getterTypeToTable);
+            return new("VARCHAR",
+                r => (TryGet(r, prop) as IFormLinkGetter)?.FormKeyNullable?.ToString(),
+                "formKey", validTypes, _empty, null);
+        }
+
+        // ── IReadOnlyList<T> ──────────────────────────────────────────────────
+
+        if (IsListType(core, out var elementType))
+        {
+            var elemCore = Nullable.GetUnderlyingType(elementType) ?? elementType;
+            var isFl = IsFormLink(elemCore);
+            var isLoqui = !isFl && IsLoquiInterface(elemCore);
+
+            IReadOnlyList<SubFieldSpec>? elemSubFields = isLoqui
+                ? BuildSubSchema(elemCore, getterTypeToTable) : null;
+
+            var elemMeta = BuildElementMeta(elementType, getterTypeToTable);
+            if (elemMeta == null) return null;
+
+            Func<IMajorRecordGetter, object?> extractor = r =>
+            {
+                try
+                {
+                    var list = TryGet(r, prop) as IEnumerable;
+                    return list == null ? null : SerializeListItems(list, elementType, elemSubFields);
+                }
+                catch { return null; }
+            };
+
+            Action<IMajorRecord, JsonElement>? apply = null;
+            if (isFl || isLoqui)
+            {
+                var capturedPName = pName;
+                var capturedElemCore = elemCore;
+                var capturedSubFields = elemSubFields;
+                var capturedIsFl = isFl;
+                var capturedIsLoqui = isLoqui;
+
+                apply = (record, json) =>
+                {
+                    try
+                    {
+                        if (json.ValueKind != JsonValueKind.Array) return;
+                        var rp = record.GetType()
+                            .GetProperty(capturedPName, BindingFlags.Public | BindingFlags.Instance);
+                        if (rp == null || !rp.CanWrite) return;
+
+                        var listType = rp.PropertyType;
+                        var newList = Activator.CreateInstance(listType)!;
+                        var addMethod = listType.GetMethod("Add")!;
+
+                        // Derive the concrete element type from the mutable list's generic argument,
+                        // not from GetSetterType — which returns the setter *interface* (e.g.
+                        // IRankPlacement), not the instantiable concrete class (RankPlacement).
+                        Type? setterType = capturedIsLoqui && listType.IsGenericType
+                            ? listType.GetGenericArguments()[0]
+                            : null;
+
+                        foreach (var elem in json.EnumerateArray())
+                        {
+                            object? item = null;
+                            if (capturedIsFl)
+                            {
+                                var fkStr = elem.GetString();
+                                if (fkStr != null && FormKey.TryFactory(fkStr, out var fk))
+                                {
+                                    var flType = typeof(FormLink<>).MakeGenericType(
+                                        capturedElemCore.GetGenericArguments()[0]);
+                                    item = Activator.CreateInstance(flType, fk);
+                                }
+                            }
+                            else if (capturedIsLoqui && setterType != null && capturedSubFields != null)
+                            {
+                                var elemObj = Activator.CreateInstance(setterType)!;
+                                foreach (var sf in capturedSubFields)
+                                {
+                                    if (sf.Apply == null) continue;
+                                    if (elem.TryGetProperty(sf.Name, out var sfVal))
+                                        sf.Apply(elemObj, sfVal);
+                                }
+                                item = elemObj;
+                            }
+                            if (item != null) addMethod.Invoke(newList, [item]);
+                        }
+
+                        rp.SetValue(record, newList);
+                    }
+                    catch { }
+                };
+            }
+
+            return new("VARCHAR", extractor, "array", _empty, _empty, apply,
+                ElementMeta: elemMeta);
+        }
+
+        // ── Loqui struct (sub-record) ─────────────────────────────────────────
+
+        if (IsLoquiInterface(core))
+        {
+            var subFields = BuildSubSchema(core, getterTypeToTable);
+            if (subFields.Count == 0) return null;
+
+            var subFieldMetas = subFields.Select(s => s.ToFieldMetadata()).ToList();
+            var capturedPName = pName;
+            var capturedSF = subFields;
+
+            Func<IMajorRecordGetter, object?> extractor = r =>
+            {
+                try
+                {
+                    var obj = TryGet(r, prop);
+                    return obj == null ? null
+                        : JsonSerializer.Serialize(ExtractSubObject(obj, capturedSF));
+                }
+                catch { return null; }
+            };
+
+            var setterType = GetSetterType(core);
+            Action<IMajorRecord, JsonElement>? apply = null;
+            if (setterType != null)
+            {
+                apply = (record, json) =>
+                {
+                    try
+                    {
+                        if (json.ValueKind != JsonValueKind.Object) return;
+                        var rp = record.GetType()
+                            .GetProperty(capturedPName, BindingFlags.Public | BindingFlags.Instance);
+                        if (rp == null) return;
+                        var obj = rp.GetValue(record) ?? Activator.CreateInstance(setterType)!;
+                        foreach (var sf in capturedSF)
+                        {
+                            if (sf.Apply == null) continue;
+                            if (json.TryGetProperty(sf.Name, out var sfVal))
+                                sf.Apply(obj, sfVal);
+                        }
+                        if (rp.CanWrite) rp.SetValue(record, obj);
+                    }
+                    catch { }
+                };
+            }
+
+            return new("VARCHAR", extractor, "struct", _empty, _empty, apply,
+                SubFieldMetas: subFieldMetas);
         }
 
         return null;
@@ -248,13 +635,6 @@ public sealed class SchemaReflector : ISchemaReflector
         try { return prop.GetValue(record); }
         catch { return null; }
     }
-
-    private static bool IsTranslatedString(Type type) =>
-        typeof(ITranslatedStringGetter).IsAssignableFrom(type);
-
-    private static bool IsFormLink(Type type) =>
-        type.IsInterface && type.IsGenericType &&
-        typeof(IFormLinkGetter).IsAssignableFrom(type);
 
     internal static string ToSnakeCase(string name) =>
         Regex.Replace(name, "(?<=[a-z0-9])([A-Z])", "_$1").ToLowerInvariant();

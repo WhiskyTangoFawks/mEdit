@@ -5,17 +5,31 @@ import * as vscode from 'vscode';
 const TEST_PORT = 15172;
 let mockBackend: http.Server;
 
-// Start a mock backend that answers GET /health → 200 so the extension
-// activates in 'attached' state. Uses port 15172 (set via workspace settings).
+function createMockBackend(): http.Server {
+  return http.createServer((req, res) => {
+    if (req.url === '/health') {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+    if (req.url === '/plugins') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify([]));
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+}
+
+// Start a mock backend that answers GET /health → 200 and GET /plugins → []
+// so the extension activates in 'attached' state. Uses port 15172 (set via workspace settings).
 before(async function () {
   this.timeout(15000);
 
   // The mock backend must be up before the extension activates so
   // BackendManager's first poll succeeds.
-  mockBackend = http.createServer((_req, res) => {
-    res.writeHead(200);
-    res.end();
-  });
+  mockBackend = createMockBackend();
   await new Promise<void>(r => mockBackend.listen(TEST_PORT, '127.0.0.1', () => r()));
 
   // activationEvents: [] means the extension is NOT auto-activated on startup.
@@ -89,5 +103,24 @@ describe('mEdit.openEditor', () => {
       tabsAfterFirst,
       'Second mEdit.openEditor call should reuse the existing panel, not open a new tab'
     );
+  });
+
+  it('updates the panel title when opened for a different record', async () => {
+    await vscode.commands.executeCommand('mEdit.openEditor', {
+      formKey: 'Fallout4.esm:000010',
+      label: 'First Record',
+    });
+    await new Promise(r => setTimeout(r, 300));
+
+    await vscode.commands.executeCommand('mEdit.openEditor', {
+      formKey: 'Fallout4.esm:000011',
+      label: 'Second Record',
+    });
+    await new Promise(r => setTimeout(r, 300));
+
+    const tabs = vscode.window.tabGroups.all.flatMap(g => g.tabs);
+    const editTab = tabs.find(t => String(t.label).startsWith('First Record') || String(t.label).startsWith('Second Record'));
+    assert.ok(editTab, 'Expected an mEdit tab to exist');
+    assert.strictEqual(editTab.label, 'Second Record', 'Panel title should update to the most recently opened record');
   });
 });

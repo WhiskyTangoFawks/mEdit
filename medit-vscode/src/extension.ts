@@ -8,6 +8,7 @@ import { SessionController } from './SessionController';
 import { LoadMoreNode, PluginTreeProvider, RecordNode } from './PluginTreeProvider';
 import { ApiPluginRepository } from './PluginRepository';
 import { buildWebviewHtml } from './webviewHtml';
+import { EXTENSION_TO_WEBVIEW, WEBVIEW_TO_EXTENSION } from './messages';
 
 let backendManager: BackendManager | undefined;
 
@@ -15,11 +16,16 @@ export async function activate(context: vscode.ExtensionContext) {
   const cfg = vscode.workspace.getConfiguration('mEdit');
   const port: number = cfg.get('backendPort') ?? 5172;
 
+  const outputChannel = vscode.window.createOutputChannel('mEdit');
+  context.subscriptions.push(outputChannel);
+  const log = (msg: string) => outputChannel.appendLine(`[${new Date().toISOString()}] ${msg}`);
+
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   context.subscriptions.push(statusBarItem);
 
   backendManager = new BackendManager({
     port,
+    log,
     statusBar: {
       setText: (t) => { statusBarItem.text = t; },
       show: () => statusBarItem.show(),
@@ -28,11 +34,12 @@ export async function activate(context: vscode.ExtensionContext) {
   });
 
   const client = createApiClient(port);
-  const treeProvider = new PluginTreeProvider(new ApiPluginRepository(client));
+  const treeProvider = new PluginTreeProvider(new ApiPluginRepository(client, log), log);
   const openPanels = new Map<string, vscode.WebviewPanel>();
 
   const controller = new SessionController({
     client,
+    log,
     makeWizard: () => new SessionWizard({
       client,
       detectPaths: () => {
@@ -148,7 +155,7 @@ function openRecordPanel(
     existing.title = title;
     existing.reveal();
     if (formKey) {
-      existing.webview.postMessage({ type: 'loadRecord', formKey });
+      existing.webview.postMessage({ type: EXTENSION_TO_WEBVIEW.LOAD_RECORD, formKey });
     }
     return;
   }
@@ -164,7 +171,7 @@ function openRecordPanel(
   panel.webview.onDidReceiveMessage((msg: unknown) => {
     if (typeof msg === 'object' && msg !== null && 'type' in msg) {
       const m = msg as { type: string; formKey?: string; label?: string };
-      if (m.type === 'openRecord' && m.formKey) {
+      if (m.type === WEBVIEW_TO_EXTENSION.OPEN_RECORD && m.formKey) {
         vscode.commands.executeCommand('mEdit.openEditor', { formKey: m.formKey, label: m.formKey });
       }
     }

@@ -90,7 +90,7 @@ try
         var gameFolder = gameRelease.ToCategory() switch
         {
             GameCategory.Fallout4 => "Fallout4",
-            GameCategory.Skyrim   => "Skyrim Special Edition",
+            GameCategory.Skyrim => "Skyrim Special Edition",
             GameCategory.Oblivion => "Oblivion",
             GameCategory.Starfield => "Starfield",
             _ => null
@@ -109,10 +109,10 @@ try
         // Plugins.txt lives under {steamLibrary}/steamapps/compatdata/{appId}/pfx/...
         var steamAppId = gameRelease.ToCategory() switch
         {
-            GameCategory.Fallout4  => "377160",
-            GameCategory.Skyrim    => "489830",
+            GameCategory.Fallout4 => "377160",
+            GameCategory.Skyrim => "489830",
             GameCategory.Starfield => "1716740",
-            _                      => null
+            _ => null
         };
 
         if (steamAppId == null) return null;

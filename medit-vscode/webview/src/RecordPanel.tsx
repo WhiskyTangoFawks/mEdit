@@ -1,9 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { ArrayRowGroup } from './ArrayRowGroup';
 import { FormKeyPicker } from './FormKeyPicker';
+import { StructRowGroup } from './StructRowGroup';
 import { buildColumns } from './recordUtils';
 import type { Column } from './recordUtils';
 import type { CompareResult, FieldDiff, FieldMetadata, PendingChange, RecordDetail } from './types';
 import { vscode } from './vscode';
+import { EXTENSION_TO_WEBVIEW, WEBVIEW_TO_EXTENSION } from './messages';
 
 const mEditWindow = window as Window & typeof globalThis & {
   mEditFormKey: string;
@@ -41,7 +44,7 @@ interface ScalarCellProps {
   onCommit: (v: unknown) => void;
 }
 
-function ScalarCell({ value, meta, editMode, onCommit }: ScalarCellProps) {
+export function ScalarCell({ value, meta, editMode, onCommit }: ScalarCellProps) {
   const [draft, setDraft] = useState(value == null ? '' : String(value));
 
   useEffect(() => { setDraft(value == null ? '' : String(value)); }, [value]);
@@ -110,7 +113,7 @@ interface FormKeyCellProps {
   onCommit: (fk: string) => void;
 }
 
-function FormKeyCell({ value, meta, editMode, port, onOpen, onCommit }: FormKeyCellProps) {
+export function FormKeyCell({ value, meta, editMode, port, onOpen, onCommit }: FormKeyCellProps) {
   const [picking, setPicking] = useState(false);
 
   if (editMode) {
@@ -185,8 +188,21 @@ function renderCell(
       />
     );
   }
-  if (typeof value === 'object' && value !== null) {
-    return <span style={{ opacity: 0.5 }}>{Array.isArray(value) ? `[${(value as unknown[]).length}]` : '{…}'}</span>;
+  if (meta.type === 'array') {
+    return (
+      <ArrayRowGroup
+        value={value as unknown[]} meta={meta} editMode={editMode} port={port}
+        onOpen={onOpen} onCommit={v => onCommit(v)} storageKey={`array:${meta.name}`}
+      />
+    );
+  }
+  if (meta.type === 'struct') {
+    return (
+      <StructRowGroup
+        value={value as Record<string, unknown>} meta={meta} editMode={editMode} port={port}
+        onOpen={onOpen} onCommit={v => onCommit(v)} storageKey={`struct:${meta.name}`}
+      />
+    );
   }
   return <ScalarCell value={value} meta={meta} editMode={editMode} onCommit={onCommit} />;
 }
@@ -410,7 +426,7 @@ export function RecordPanel() {
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       const msg = event.data as { type?: string; formKey?: string };
-      if (msg.type === 'loadRecord' && msg.formKey) {
+      if (msg.type === EXTENSION_TO_WEBVIEW.LOAD_RECORD && msg.formKey) {
         setFormKey(msg.formKey);
         setResult(null);
         setAllChanges([]);
@@ -448,7 +464,12 @@ export function RecordPanel() {
   }
 
   async function handleRevert(changeId: string) {
-    await fetch(`http://localhost:${port}/changes/${changeId}`, { method: 'DELETE' });
+    setActionError(null);
+    const resp = await fetch(`http://localhost:${port}/changes/${changeId}`, { method: 'DELETE' });
+    if (!resp.ok) {
+      setActionError(`Revert failed: ${resp.statusText}`);
+      return;
+    }
     await refresh(formKey);
   }
 
@@ -469,19 +490,23 @@ export function RecordPanel() {
 
   async function handleCopyTo(targetPlugin: string) {
     setActionError(null);
-    const resp = await fetch(
-      `http://localhost:${port}/records/${encodeURIComponent(formKey)}/copy-to/${encodeURIComponent(targetPlugin)}`,
-      { method: 'POST' }
-    );
-    if (!resp.ok) {
-      setActionError(resp.status === 409 ? 'Plugin is read-only' : `Copy failed: ${resp.statusText}`);
-      return;
+    try {
+      const resp = await fetch(
+        `http://localhost:${port}/records/${encodeURIComponent(formKey)}/copy-to/${encodeURIComponent(targetPlugin)}`,
+        { method: 'POST' }
+      );
+      if (!resp.ok) {
+        setActionError(resp.status === 409 ? 'Plugin is read-only' : `Copy failed: ${resp.statusText}`);
+        return;
+      }
+      await refresh(formKey);
+    } catch (e) {
+      setActionError(`Copy failed: ${e instanceof Error ? e.message : 'network error'}`);
     }
-    await refresh(formKey);
   }
 
   function handleOpen(fk: string) {
-    vscode.postMessage({ type: 'openRecord', formKey: fk });
+    vscode.postMessage({ type: WEBVIEW_TO_EXTENSION.OPEN_RECORD, formKey: fk });
   }
 
   const containerStyle: React.CSSProperties = {

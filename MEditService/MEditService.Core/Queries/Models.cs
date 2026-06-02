@@ -30,7 +30,10 @@ public record FieldMetadata(
     string Type,
     bool IsArray,
     IReadOnlyList<string> ValidFormKeyTypes,
-    IReadOnlyList<string> EnumValues);
+    IReadOnlyList<string> EnumValues,
+    FieldMetadata? ElementType = null,          // for 'array': element schema
+    IReadOnlyList<FieldMetadata>? Fields = null, // for 'struct': sub-field schemas
+    bool IsSortable = false);                    // true when element is a pure FormLink
 
 public record FieldValue(FieldMetadata Metadata, object? Value);
 

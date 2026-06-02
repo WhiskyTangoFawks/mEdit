@@ -45,30 +45,49 @@ export interface PluginRepository {
 }
 
 export class ApiPluginRepository implements PluginRepository {
-  constructor(private readonly client: ApiClient) {}
+  private readonly log: (msg: string) => void;
+
+  constructor(private readonly client: ApiClient, log?: (msg: string) => void) {
+    this.log = log ?? (() => {});
+  }
 
   async getPlugins(): Promise<PluginMetadata[]> {
-    const { data } = await this.client.GET('/plugins', {});
-    const raw = (data as PluginResponse[] | undefined) ?? [];
-    return raw.map(toPluginMetadata);
+    try {
+      const { data } = await this.client.GET('/plugins', {});
+      const raw = (data as PluginResponse[] | undefined) ?? [];
+      return raw.map(toPluginMetadata);
+    } catch (e) {
+      this.log(`[PluginRepository] getPlugins failed: ${e instanceof Error ? e.message : String(e)}`);
+      return [];
+    }
   }
 
   async getRecordTypes(plugin: string): Promise<{ type: string; count: number }[]> {
-    const { data } = await this.client.GET('/plugins/{plugin}/record-types', {
-      params: { path: { plugin } },
-    });
-    const raw = (data as PluginRecordTypeCount[] | undefined) ?? [];
-    return raw.map(toRecordTypeCount);
+    try {
+      const { data } = await this.client.GET('/plugins/{plugin}/record-types', {
+        params: { path: { plugin } },
+      });
+      const raw = (data as PluginRecordTypeCount[] | undefined) ?? [];
+      return raw.map(toRecordTypeCount);
+    } catch (e) {
+      this.log(`[PluginRepository] getRecordTypes(${plugin}) failed: ${e instanceof Error ? e.message : String(e)}`);
+      return [];
+    }
   }
 
   async getRecords(plugin: string, type: string, offset: number, limit: number): Promise<RecordPage> {
-    const { data } = await this.client.GET('/records', {
-      params: { query: { plugin, type, offset, limit } },
-    });
-    const raw = data as RecordSummaryPagedResult | undefined;
-    return {
-      items: (raw?.items ?? []).map(toRecordSummary),
-      total: raw?.total ?? 0,
-    };
+    try {
+      const { data } = await this.client.GET('/records', {
+        params: { query: { plugin, type, offset, limit } },
+      });
+      const raw = data as RecordSummaryPagedResult | undefined;
+      return {
+        items: (raw?.items ?? []).map(toRecordSummary),
+        total: raw?.total ?? 0,
+      };
+    } catch (e) {
+      this.log(`[PluginRepository] getRecords(${plugin}, ${type}) failed: ${e instanceof Error ? e.message : String(e)}`);
+      return { items: [], total: 0 };
+    }
   }
 }

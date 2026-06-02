@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MEditService.Core.Schema;
+using Microsoft.Extensions.Logging;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
 using Mutagen.Bethesda.Plugins.Records;
@@ -21,10 +22,12 @@ public sealed class PluginWriter : IPluginWriter
     private const int MaxBackups = 5;
 
     private readonly ISchemaReflector _schemaReflector;
+    private readonly ILogger<PluginWriter> _logger;
 
-    public PluginWriter(ISchemaReflector schemaReflector)
+    public PluginWriter(ISchemaReflector schemaReflector, ILogger<PluginWriter> logger)
     {
         _schemaReflector = schemaReflector;
+        _logger = logger;
     }
 
     public async Task<SaveResult> SaveAsync(
@@ -34,7 +37,7 @@ public sealed class PluginWriter : IPluginWriter
     {
         var backupPath = CreateBackup(pluginPath);
 
-        var modKey  = ModKey.FromFileName(Path.GetFileName(pluginPath));
+        var modKey = ModKey.FromFileName(Path.GetFileName(pluginPath));
         var modPath = new ModPath(modKey, pluginPath);
 
         var mod = ModFactory.ImportSetter(modPath, gameRelease);
@@ -42,7 +45,7 @@ public sealed class PluginWriter : IPluginWriter
         var byFormKey = changes.GroupBy(c => c.FormKey);
         var schemas = _schemaReflector.GetSchemas(gameRelease);
 
-        var applied  = new List<string>();
+        var applied = new List<string>();
         var readOnly = new List<string>();
         var notFound = new List<string>();
 
@@ -65,7 +68,7 @@ public sealed class PluginWriter : IPluginWriter
             {
                 switch (TryApplyField(record, change, schemas))
                 {
-                    case ApplyOutcome.Applied:  applied.Add(change.FieldPath);  break;
+                    case ApplyOutcome.Applied: applied.Add(change.FieldPath); break;
                     case ApplyOutcome.ReadOnly: readOnly.Add(change.FieldPath); break;
                     case ApplyOutcome.NotFound: notFound.Add(change.FieldPath); break;
                 }
@@ -111,26 +114,27 @@ public sealed class PluginWriter : IPluginWriter
 
     private static string CreateBackup(string pluginPath)
     {
-        var dir  = Path.GetDirectoryName(pluginPath)!;
+        var dir = Path.GetDirectoryName(pluginPath)!;
         var name = Path.GetFileNameWithoutExtension(pluginPath);
-        var ext  = Path.GetExtension(pluginPath);
-        var ts   = DateTime.UtcNow.ToString("yyyy-MM-ddTHH-mm-ss");
+        var ext = Path.GetExtension(pluginPath);
+        var ts = DateTime.UtcNow.ToString("yyyy-MM-ddTHH-mm-ss");
         var path = Path.Combine(dir, $"{name}.{ts}.bak{ext}");
         File.Copy(pluginPath, path, overwrite: false);
         return path;
     }
 
-    private static void PruneOldBackups(string pluginPath)
+    private void PruneOldBackups(string pluginPath)
     {
-        var dir  = Path.GetDirectoryName(pluginPath)!;
+        var dir = Path.GetDirectoryName(pluginPath)!;
         var name = Path.GetFileNameWithoutExtension(pluginPath);
-        var ext  = Path.GetExtension(pluginPath);
+        var ext = Path.GetExtension(pluginPath);
 
         var old = Directory.GetFiles(dir, $"{name}.*.bak{ext}")
             .OrderByDescending(f => f)
             .Skip(MaxBackups);
 
         foreach (var f in old)
-            try { File.Delete(f); } catch { /* best effort */ }
+            try { File.Delete(f); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Failed to delete old backup {File}", f); }
     }
 }

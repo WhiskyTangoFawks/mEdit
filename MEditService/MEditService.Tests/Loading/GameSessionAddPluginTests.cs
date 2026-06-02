@@ -55,6 +55,82 @@ public sealed class GameSessionAddPluginTests : IClassFixture<TestPluginFixture>
         Assert.NotNull(session.GetMod("NewEmpty.esp"));
     }
 
+    [Fact]
+    public void AddPlugin_IsImmutableAlwaysFalse()
+    {
+        using var session = new GameSession(
+            _fixture.DataFolder, _fixture.PluginsTxtPath, GameRelease.Fallout4);
+
+        var newPluginPath = Path.Combine(_fixture.DataFolder, "Immutable.esp");
+        WriteEmptyPlugin(newPluginPath, GameRelease.Fallout4);
+
+        var metadata = session.AddPlugin(newPluginPath);
+
+        Assert.False(metadata.IsImmutable);
+    }
+
+    [Fact]
+    public void AddPlugin_EslExtension_HasIsLightTrue()
+    {
+        using var session = new GameSession(
+            _fixture.DataFolder, _fixture.PluginsTxtPath, GameRelease.Fallout4);
+
+        var newPluginPath = Path.Combine(_fixture.DataFolder, "Added.esl");
+        WriteEmptyPlugin(newPluginPath, GameRelease.Fallout4);
+
+        var metadata = session.AddPlugin(newPluginPath);
+
+        Assert.True(metadata.IsLight);
+        Assert.False(metadata.IsMaster);
+    }
+
+    [Fact]
+    public void AddPlugin_EsmExtension_HasIsMasterTrue()
+    {
+        using var session = new GameSession(
+            _fixture.DataFolder, _fixture.PluginsTxtPath, GameRelease.Fallout4);
+
+        var newPluginPath = Path.Combine(_fixture.DataFolder, "Added.esm");
+        WriteEmptyPlugin(newPluginPath, GameRelease.Fallout4);
+
+        var metadata = session.AddPlugin(newPluginPath);
+
+        Assert.True(metadata.IsMaster);
+        Assert.False(metadata.IsLight);
+    }
+
+    [Fact]
+    public void AddPlugin_RecordCount_MatchesPluginContents()
+    {
+        using var data = new PluginFixtureBuilder("gs-add-rcount")
+            .WithPlugin("Base.esp")
+            .WithPlugin("With2Npcs.esp", mod => { mod.Npcs.AddNew("Npc1"); mod.Npcs.AddNew("Npc2"); }, listed: false)
+            .Build();
+        using var session = new GameSession(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+        var pluginPath = Path.Combine(data.DataFolder, "With2Npcs.esp");
+
+        var metadata = session.AddPlugin(pluginPath);
+
+        Assert.Equal(2, metadata.RecordCount);
+    }
+
+    [Fact]
+    public void AddPlugin_CalledTwice_SecondPluginHasNextLoadOrderIndex()
+    {
+        using var session = new GameSession(
+            _fixture.DataFolder, _fixture.PluginsTxtPath, GameRelease.Fallout4);
+
+        var firstPath = Path.Combine(_fixture.DataFolder, "First.esp");
+        var secondPath = Path.Combine(_fixture.DataFolder, "Second.esp");
+        WriteEmptyPlugin(firstPath, GameRelease.Fallout4);
+        WriteEmptyPlugin(secondPath, GameRelease.Fallout4);
+
+        var first = session.AddPlugin(firstPath);
+        var second = session.AddPlugin(secondPath);
+
+        Assert.Equal(first.LoadOrderIndex + 1, second.LoadOrderIndex);
+    }
+
     private static void WriteEmptyPlugin(string path, GameRelease release)
     {
         var modKey = Mutagen.Bethesda.Plugins.ModKey.FromFileName(Path.GetFileName(path));

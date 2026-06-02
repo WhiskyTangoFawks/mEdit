@@ -20,7 +20,7 @@ public sealed class ProblemDetailsApiTests : IClassFixture<TestPluginFixture>
         Assert.Equal(ProblemContentType, ct);
 
         var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-        var doc  = JsonDocument.Parse(body).RootElement;
+        var doc = JsonDocument.Parse(body).RootElement;
         Assert.Equal(expectedStatus, doc.GetProperty("status").GetInt32());
     }
 
@@ -36,7 +36,7 @@ public sealed class ProblemDetailsApiTests : IClassFixture<TestPluginFixture>
         {
             dataFolderPath = "/nonexistent/path",
             pluginsTxtPath = _fixture.PluginsTxtPath,
-            gameRelease    = "Fallout4",
+            gameRelease = "Fallout4",
         });
 
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
@@ -53,7 +53,7 @@ public sealed class ProblemDetailsApiTests : IClassFixture<TestPluginFixture>
         {
             dataFolderPath = _fixture.DataFolder,
             pluginsTxtPath = "/nonexistent/Plugins.txt",
-            gameRelease    = "Fallout4",
+            gameRelease = "Fallout4",
         });
 
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
@@ -70,7 +70,7 @@ public sealed class ProblemDetailsApiTests : IClassFixture<TestPluginFixture>
         {
             dataFolderPath = _fixture.DataFolder,
             pluginsTxtPath = _fixture.PluginsTxtPath,
-            gameRelease    = "NotARealGame",
+            gameRelease = "NotARealGame",
         });
 
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
@@ -137,7 +137,7 @@ public sealed class ProblemDetailsApiTests : IClassFixture<TestPluginFixture>
     public async Task PatchRecord_NoSession_ReturnsProblemDetails500()
     {
         await using var app = new WebApplicationFactory<Program>();
-        var client  = app.CreateClient();
+        var client = app.CreateClient();
         var formKey = Uri.EscapeDataString(_fixture.Npc1FormKey.ToString());
 
         var resp = await client.PatchAsJsonAsync($"/records/{formKey}", new
@@ -156,7 +156,7 @@ public sealed class ProblemDetailsApiTests : IClassFixture<TestPluginFixture>
     public async Task CopyRecord_NoSession_ReturnsProblemDetails500()
     {
         await using var app = new WebApplicationFactory<Program>();
-        var client  = app.CreateClient();
+        var client = app.CreateClient();
         var formKey = Uri.EscapeDataString(_fixture.Npc1FormKey.ToString());
 
         var resp = await client.PostAsync(
@@ -189,7 +189,7 @@ public sealed class ProblemDetailsApiTests : IClassFixture<TestPluginFixture>
         {
             dataFolderPath = _fixture.DataFolder,
             pluginsTxtPath = _fixture.PluginsTxtPath,
-            gameRelease    = "Fallout4",
+            gameRelease = "Fallout4",
         });
         resp.EnsureSuccessStatusCode();
     }

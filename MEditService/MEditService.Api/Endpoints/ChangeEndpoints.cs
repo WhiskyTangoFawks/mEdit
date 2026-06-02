@@ -23,15 +23,15 @@ public static class ChangeEndpoints
 
             return result switch
             {
-                StageEditResult.NoSession        => Results.Problem("No session loaded."),
+                StageEditResult.NoSession => Results.Problem("No session loaded."),
                 StageEditResult.PluginImmutable i => Results.Problem(
                     $"'{i.Plugin}' is a base-game plugin and cannot be edited.", statusCode: 409),
-                StageEditResult.RecordNotFound   => Results.NotFound(),
-                StageEditResult.ReadOnlyFields r  => Results.Problem(
+                StageEditResult.RecordNotFound => Results.NotFound(),
+                StageEditResult.ReadOnlyFields r => Results.Problem(
                     detail: $"The following fields are read-only and cannot be edited: {string.Join(", ", r.Fields)}",
                     statusCode: 422),
-                StageEditResult.Staged staged      => Results.Ok(staged.Changes),
-                _                                 => Results.Problem("Unexpected error.")
+                StageEditResult.Staged staged => Results.Ok(staged.Changes),
+                _ => Results.Problem("Unexpected error.")
             };
         })
         .WithName("PatchRecord")
@@ -46,7 +46,7 @@ public static class ChangeEndpoints
             [FromQuery] string? formKey,
             IPendingChangeService changes) =>
         {
-            var decodedPlugin  = plugin  != null ? Uri.UnescapeDataString(plugin)  : null;
+            var decodedPlugin = plugin != null ? Uri.UnescapeDataString(plugin) : null;
             var decodedFormKey = formKey != null ? Uri.UnescapeDataString(formKey) : null;
             return Results.Ok(changes.GetChanges(decodedPlugin, decodedFormKey));
         })
@@ -71,7 +71,7 @@ public static class ChangeEndpoints
             [FromQuery] string? formKey,
             IPendingChangeService changes) =>
         {
-            var decodedPlugin  = plugin  != null ? Uri.UnescapeDataString(plugin)  : null;
+            var decodedPlugin = plugin != null ? Uri.UnescapeDataString(plugin) : null;
             var decodedFormKey = formKey != null ? Uri.UnescapeDataString(formKey) : null;
             var count = changes.Revert(decodedPlugin, decodedFormKey);
             return Results.Ok(count);
@@ -90,19 +90,19 @@ public static class ChangeEndpoints
             var s = session.Session;
             if (s == null) return Results.Problem("No session loaded.");
 
-            var decoded       = Uri.UnescapeDataString(formKey);
+            var decoded = Uri.UnescapeDataString(formKey);
             var decodedTarget = Uri.UnescapeDataString(targetPlugin);
 
             var result = orchestrator.CopyRecordTo(decoded, decodedTarget, source ?? "user");
 
             return result switch
             {
-                StageEditResult.NoSession        => Results.Problem("No session loaded."),
+                StageEditResult.NoSession => Results.Problem("No session loaded."),
                 StageEditResult.PluginImmutable i => Results.Problem(
                     $"'{i.Plugin}' is a base-game plugin and cannot be edited.", statusCode: 409),
-                StageEditResult.RecordNotFound   => Results.NotFound(),
-                StageEditResult.Staged staged      => Results.Ok(staged.Changes),
-                _                                 => Results.Problem("Unexpected error.")
+                StageEditResult.RecordNotFound => Results.NotFound(),
+                StageEditResult.Staged staged => Results.Ok(staged.Changes),
+                _ => Results.Problem("Unexpected error.")
             };
         })
         .WithName("CopyRecordTo")
@@ -114,8 +114,10 @@ public static class ChangeEndpoints
         app.MapPost("/plugins/{plugin}/save", async (
             [FromRoute] string plugin,
             IPendingChangeService changes,
-            ISessionManager session) =>
+            ISessionManager session,
+            ILoggerFactory loggerFactory) =>
         {
+            var logger = loggerFactory.CreateLogger(nameof(ChangeEndpoints));
             var decodedPlugin = Uri.UnescapeDataString(plugin);
 
             var s = session.Session;
@@ -139,6 +141,7 @@ public static class ChangeEndpoints
             }
             catch (Exception ex)
             {
+                logger.LogError(ex, "Failed to save plugin {Plugin} — re-queuing {Count} changes", decodedPlugin, pending.Count);
                 // Re-queue the drained changes so they are not lost on error
                 foreach (var c in pending)
                     changes.Upsert(c.FormKey, c.Plugin, c.RecordType,

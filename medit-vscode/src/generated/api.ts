@@ -238,6 +238,9 @@ export interface components {
             isArray?: boolean;
             validFormKeyTypes?: string[] | null;
             enumValues?: string[] | null;
+            elementType?: components["schemas"]["FieldMetadata"];
+            fields?: components["schemas"]["FieldMetadata"][] | null;
+            isSortable?: boolean;
         };
         FieldValue: {
             metadata?: components["schemas"]["FieldMetadata"];

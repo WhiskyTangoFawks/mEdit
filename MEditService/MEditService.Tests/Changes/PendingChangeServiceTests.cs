@@ -13,7 +13,7 @@ public sealed class PendingChangeServiceTests
     public void Upsert_NewField_CreatesChange()
     {
         var fields = new Dictionary<string, JsonElement> { ["name"] = J("\"NewName\"") };
-        var old    = new Dictionary<string, JsonElement> { ["name"] = J("\"OldName\"") };
+        var old = new Dictionary<string, JsonElement> { ["name"] = J("\"OldName\"") };
 
         var changes = _svc.Upsert("ABC:000001:TestPlugin.esp", "TestPlugin.esp", "npc_", fields, "user", null, old);
 
