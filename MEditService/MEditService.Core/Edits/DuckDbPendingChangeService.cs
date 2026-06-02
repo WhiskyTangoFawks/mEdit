@@ -9,11 +9,8 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
     private readonly Lock _lock = new();
     private DuckDBConnection? _connection;
 
-    public DuckDbPendingChangeService(DuckDBConnection connection)
-    {
-        _connection = connection;
-        EnsureTable(connection);
-    }
+    public DuckDbPendingChangeService(DuckDBConnection connection) =>
+        ((IPendingChangeLifecycle)this).OnSessionLoaded(connection);
 
     public DuckDbPendingChangeService() { }
 
@@ -48,7 +45,7 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
                 plugin      VARCHAR     NOT NULL,
                 field_path  VARCHAR     NOT NULL,
                 record_type VARCHAR     NOT NULL,
-                old_value   VARCHAR,
+                old_value   VARCHAR     NOT NULL,
                 new_value   VARCHAR     NOT NULL,
                 source      VARCHAR     NOT NULL,
                 description VARCHAR,
@@ -95,6 +92,7 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
             var result = new List<PendingChange>(fields.Count);
             var now = DateTime.UtcNow;
 
+            using var txn = conn.BeginTransaction();
             foreach (var (field, newValue) in fields)
             {
                 var id = Guid.NewGuid().ToString();
@@ -120,13 +118,14 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
                 cmd.Parameters.Add(new DuckDBParameter { Value = oldRaw });
                 cmd.Parameters.Add(new DuckDBParameter { Value = newValue.GetRawText() });
                 cmd.Parameters.Add(new DuckDBParameter { Value = source });
-                cmd.Parameters.Add(new DuckDBParameter { Value = (object?)description ?? DBNull.Value });
+                cmd.Parameters.Add(new DuckDBParameter { Value = description });
                 cmd.Parameters.Add(new DuckDBParameter { Value = now });
 
                 using var reader = cmd.ExecuteReader();
                 if (reader.Read())
                     result.Add(ReadChange(reader));
             }
+            txn.Commit();
 
             return result;
         }
@@ -176,7 +175,8 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
             {
                 var fieldPath = reader.GetString(0);
                 var json = reader.GetString(1);
-                result[fieldPath] = JsonDocument.Parse(json).RootElement.Clone();
+                using var doc = JsonDocument.Parse(json);
+                result[fieldPath] = doc.RootElement.Clone();
             }
             return result.Count == 0 ? null : result;
         }
@@ -237,14 +237,16 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
         var plugin = reader.GetString(2);
         var fieldPath = reader.GetString(3);
         var recordType = reader.GetString(4);
-        var oldValueJson = reader.IsDBNull(5) ? "null" : reader.GetString(5);
+        var oldValueJson = reader.GetString(5);
         var newValueJson = reader.GetString(6);
         var source = reader.GetString(7);
         var description = reader.IsDBNull(8) ? null : reader.GetString(8);
         var changedAt = reader.GetDateTime(9);
 
-        var oldValue = JsonDocument.Parse(oldValueJson).RootElement.Clone();
-        var newValue = JsonDocument.Parse(newValueJson).RootElement.Clone();
+        using var oldDoc = JsonDocument.Parse(oldValueJson);
+        var oldValue = oldDoc.RootElement.Clone();
+        using var newDoc = JsonDocument.Parse(newValueJson);
+        var newValue = newDoc.RootElement.Clone();
 
         return new PendingChange(id, formKey, plugin, fieldPath, recordType, oldValue, newValue, source, description, changedAt);
     }

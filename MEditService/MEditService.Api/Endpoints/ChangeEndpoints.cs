@@ -71,6 +71,8 @@ public static class ChangeEndpoints
             [FromQuery] string? formKey,
             IPendingChangeService changes) =>
         {
+            if (plugin == null && formKey == null)
+                return Results.Problem("At least one of 'plugin' or 'formKey' must be specified.", statusCode: 400);
             var decodedPlugin = plugin != null ? Uri.UnescapeDataString(plugin) : null;
             var decodedFormKey = formKey != null ? Uri.UnescapeDataString(formKey) : null;
             var count = changes.Revert(decodedPlugin, decodedFormKey);
@@ -78,7 +80,8 @@ public static class ChangeEndpoints
         })
         .WithName("BulkDeleteChanges")
         .WithTags("Changes")
-        .Produces<int>();
+        .Produces<int>()
+        .ProducesProblem(400);
 
         app.MapPost("/records/{formKey}/copy-to/{targetPlugin}", (
             [FromRoute] string formKey,

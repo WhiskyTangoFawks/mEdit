@@ -23,16 +23,29 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
 FALLBACK_MUTATE = ["**/MEditService.Core/**/*.cs"]
 
 
+def committed_config(config_path: Path, repo_root: Path) -> str:
+    """Return the committed (HEAD) text of stryker-config.json via git."""
+    rel = config_path.relative_to(repo_root)
+    r = subprocess.run(
+        ["git", "show", f"HEAD:{rel}"],
+        capture_output=True, text=True, cwd=repo_root,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(f"Could not read committed config: {r.stderr.strip()}")
+    return r.stdout
+
+
 @contextlib.contextmanager
-def patched_config(config_path: Path, mutate: list[str]):
-    """Temporarily set mutate in stryker-config.json, restore on exit."""
-    original = config_path.read_text()
+def patched_config(config_path: Path, repo_root: Path, mutate: list[str]):
+    """Temporarily set mutate in stryker-config.json, restore to HEAD on exit."""
+    original = committed_config(config_path, repo_root)
     config = json.loads(original)
     config["stryker-config"]["mutate"] = mutate
     config_path.write_text(json.dumps(config, indent=2) + "\n")
@@ -53,13 +66,14 @@ def changed_names(repo_root: Path, extra_args: list[str]) -> set[str]:
 def compute_mutate_scope(repo_root: Path) -> list[str]:
     """Return mutate globs for all Core .cs files touched since main or in the working tree."""
     all_changed: set[str] = set()
-    all_changed |= changed_names(repo_root, [])             # unstaged vs HEAD
-    all_changed |= changed_names(repo_root, ["--cached"])   # staged vs HEAD
+    all_changed |= changed_names(repo_root, [])              # unstaged vs HEAD
+    all_changed |= changed_names(repo_root, ["--cached"])    # staged vs HEAD
     all_changed |= changed_names(repo_root, ["main...HEAD"]) # commits ahead of main
 
     marker = "MEditService.Core/"
     core_files = [f for f in all_changed if marker in f and f.endswith(".cs")]
     if not core_files:
+        print("WARNING: no Core files found in diff — falling back to full Core scan (slow)")
         return FALLBACK_MUTATE
 
     patterns: set[str] = set()
@@ -114,7 +128,14 @@ def print_mutants(label: str, items: list) -> None:
 def main() -> None:
     use_all = "--all" in sys.argv
     base_dir = Path(next((a for a in sys.argv[1:] if not a.startswith("--")), ".")).resolve()
-    repo_root = base_dir.parent  # MEditService/ → repo root
+    r = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, cwd=base_dir,
+    )
+    if r.returncode != 0:
+        print("ERROR: not inside a git repository", file=sys.stderr)
+        sys.exit(2)
+    repo_root = Path(r.stdout.strip())
 
     if use_all:
         mutate = FALLBACK_MUTATE
@@ -134,9 +155,9 @@ def main() -> None:
     print("=" * 70)
     sys.stdout.flush()
 
-    run_start = os.times().elapsed  # wall-clock seconds before Stryker starts
+    run_start = time.time()
 
-    with patched_config(config_path, mutate):
+    with patched_config(config_path, repo_root, mutate):
         subprocess.run(
             ["dotnet", "stryker", "--config-file", "stryker-config.json"],
             cwd=base_dir,

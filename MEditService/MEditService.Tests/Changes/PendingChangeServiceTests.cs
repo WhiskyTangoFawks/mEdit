@@ -176,4 +176,34 @@ public sealed class PendingChangeServiceTests : IDisposable
     {
         Assert.Null(_svc.GetPendingFields("FK1", "P.esp"));
     }
+
+    [Fact]
+    public void Upsert_WithDescription_DescriptionRoundTrips()
+    {
+        _svc.Upsert("FK1", "P.esp", "npc_",
+            new() { ["name"] = J("\"x\"") }, "user", "My description", new());
+        var changes = _svc.GetChanges();
+        Assert.Equal("My description", changes[0].Description);
+    }
+
+    [Fact]
+    public void OnSessionUnloaded_DropsTable()
+    {
+        _svc.Upsert("FK1", "P.esp", "npc_",
+            new() { ["name"] = J("\"x\"") }, "test", null, new());
+
+        ((IPendingChangeLifecycle)_svc).OnSessionUnloaded();
+
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'pending_changes'";
+        Assert.Equal(0L, cmd.ExecuteScalar());
+    }
+
+    [Fact]
+    public void GetChanges_BeforeSessionLoaded_ThrowsWithMessage()
+    {
+        var svc = new DuckDbPendingChangeService();
+        var ex = Assert.Throws<InvalidOperationException>(() => svc.GetChanges());
+        Assert.Equal("No session loaded.", ex.Message);
+    }
 }

@@ -87,11 +87,10 @@ Spawn a sub-agent with this prompt:
 
 Gate 5 depends on Gate 3. Only spawn this after Gate 3 is green.
 
-Spawn a sub-agent with this prompt (fill in the bracketed parts):
+Spawn a sub-agent with this prompt:
 
 > Run `cd MEditService && python stryker-report.py` from the repo root `/home/wayne/Games/FO4/mEdit`.
-> Changed Core files: [list the MEditService.Core/**/*.cs files from Step 0].
-> The script auto-scopes to those files. Allow up to 3 minutes.
+> The script auto-scopes to changed Core files. Allow up to 3 minutes.
 > Report back: overall PASS or FAIL, and for each Survived or NoCoverage mutant — the file, line number, mutator name, and the 3-line source context. Killed mutants need not be mentioned. Nothing else.
 
 **If the sub-agent reports survivors:** triage each one in the main window per the rules in `/mutation-test`. Once triaged (tests added, code deleted, or suppression justified), spawn a new Gate 5 sub-agent with the same prompt to verify. Suppression requires rubber-duck sign-off before the re-run.

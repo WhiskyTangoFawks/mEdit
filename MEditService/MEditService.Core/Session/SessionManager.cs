@@ -70,12 +70,12 @@ public sealed class SessionManager : ISessionManager, IDisposable
                 _logger.LogInformation("Computing winners");
                 repository.UpdateWinners();
 
+                _changeLifecycle?.OnSessionLoaded(repository.Connection);
                 _session = session;
                 _repository = repository;
                 _dataFolderPath = dataFolderPath;
                 _pluginsTxtPath = pluginsTxtPath;
                 _gameRelease = gameRelease;
-                _changeLifecycle?.OnSessionLoaded(repository.Connection);
                 _logger.LogInformation("Session load complete");
             }
         }
