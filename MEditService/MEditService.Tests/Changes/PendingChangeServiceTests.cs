@@ -1,11 +1,22 @@
 using System.Text.Json;
+using DuckDB.NET.Data;
 using MEditService.Core.Edits;
 
 namespace MEditService.Tests.Changes;
 
-public sealed class PendingChangeServiceTests
+public sealed class PendingChangeServiceTests : IDisposable
 {
-    private readonly PendingChangeService _svc = new();
+    private readonly DuckDBConnection _conn;
+    private readonly DuckDbPendingChangeService _svc;
+
+    public PendingChangeServiceTests()
+    {
+        _conn = new DuckDBConnection("DataSource=:memory:");
+        _conn.Open();
+        _svc = new DuckDbPendingChangeService(_conn);
+    }
+
+    public void Dispose() => _conn.Dispose();
 
     private static JsonElement J(string raw) => JsonDocument.Parse(raw).RootElement.Clone();
 

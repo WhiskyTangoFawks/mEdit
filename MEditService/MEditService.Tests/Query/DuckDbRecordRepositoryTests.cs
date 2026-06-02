@@ -1,4 +1,5 @@
 using System.Text.Json;
+using DuckDB.NET.Data;
 using MEditService.Core.Queries;
 using MEditService.Core.Records;
 using MEditService.Core.Schema;
@@ -376,18 +377,9 @@ public class DuckDbRecordRepositoryTests : IClassFixture<TestPluginFixture>
     public void GetRecord_BeforeInitialize_Throws()
     {
         var repo = new DuckDbRecordRepository(_reflector, _ddl, NullLogger.Instance);
-        Assert.Throws<InvalidOperationException>(() =>
+        var ex = Assert.Throws<InvalidOperationException>(() =>
             repo.GetRecord("npc_", "000001:Test.esp", null, winnerOnly: false));
-        repo.Dispose();
-    }
-
-    // --- Double dispose (kills _disposed boolean mutant) ---
-
-    [Fact]
-    public void Dispose_CalledTwice_DoesNotThrow()
-    {
-        var repo = new DuckDbRecordRepository(_reflector, _ddl, NullLogger.Instance);
-        repo.Dispose();
+        Assert.Equal("Call Initialize before using the repository.", ex.Message);
         repo.Dispose();
     }
 
@@ -400,5 +392,111 @@ public class DuckDbRecordRepositoryTests : IClassFixture<TestPluginFixture>
         using var repo = LoadedRepository();
         var result = repo.FindRecordType("' OR '1'='1");
         Assert.Null(result);
+    }
+
+    // --- Dispose (DuckDBConnection.Dispose is idempotent) ---
+
+    [Fact]
+    public void Dispose_CalledTwice_DoesNotThrow()
+    {
+        var repo = new DuckDbRecordRepository(_reflector, _ddl, NullLogger.Instance);
+        repo.Initialize(GameRelease.Fallout4);
+        repo.Dispose();
+        var ex = Record.Exception(() => repo.Dispose());
+        Assert.Null(ex);
+    }
+
+    // --- AppendTyped: DOUBLE branch ---
+
+    [Fact]
+    public void AppendTyped_Double_AppendsCorrectValue()
+    {
+        using var conn = new DuckDBConnection("DataSource=:memory:");
+        conn.Open();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "CREATE TABLE t (v DOUBLE)";
+            cmd.ExecuteNonQuery();
+        }
+
+        using (var appender = conn.CreateAppender("t"))
+        {
+            var row = appender.CreateRow();
+            DuckDbRecordRepository.AppendTyped(row, 3.14, "DOUBLE");
+            row.EndRow();
+        }
+
+        using var q = conn.CreateCommand();
+        q.CommandText = "SELECT v FROM t";
+        var result = q.ExecuteScalar();
+        Assert.NotNull(result);
+        Assert.Equal(3.14, (double)result, precision: 5);
+    }
+
+    [Fact]
+    public void AppendTyped_Null_AppendsNullValue()
+    {
+        using var conn = new DuckDBConnection("DataSource=:memory:");
+        conn.Open();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "CREATE TABLE t (v DOUBLE)";
+            cmd.ExecuteNonQuery();
+        }
+
+        using (var appender = conn.CreateAppender("t"))
+        {
+            var row = appender.CreateRow();
+            DuckDbRecordRepository.AppendTyped(row, null, "DOUBLE");
+            row.EndRow();
+        }
+
+        using var q = conn.CreateCommand();
+        q.CommandText = "SELECT v IS NULL FROM t";
+        Assert.Equal(true, q.ExecuteScalar());
+    }
+
+    // --- ColumnList: zero-column and non-empty branches ---
+
+    [Fact]
+    public void ColumnList_ZeroColumns_ReturnsEmptyString()
+    {
+        var schema = new RecordTableSchema { TableName = "t", RecordType = typeof(object), RecordColumns = [] };
+        Assert.Equal("", DuckDbRecordRepository.ColumnList(schema));
+    }
+
+    [Fact]
+    public void ColumnList_WithColumns_ReturnsCommaSeparatedQuotedNames()
+    {
+        var col = new ColumnSpec("my_col", "MyProp", "VARCHAR", _ => null, "string", [], [], null);
+        var schema = new RecordTableSchema { TableName = "t", RecordType = typeof(object), RecordColumns = [col] };
+        Assert.Equal(", \"my_col\"", DuckDbRecordRepository.ColumnList(schema));
+    }
+
+    // --- ReadDetail: null scalar field returns C# null, not DBNull ---
+
+    [Fact]
+    public void GetRecord_UnsetFormLinkField_ReturnsNull()
+    {
+        // Unset FormLink fields are appended as null → IsDBNull=true → must return C# null not DBNull.Value
+        using var repo = LoadedRepository();
+        var formKey = _fixture.Npc1FormKey.ToString();
+        var record = repo.GetRecord("npc_", formKey, null, winnerOnly: true);
+        Assert.NotNull(record);
+        var linkField = record.Fields.FirstOrDefault(f => f.Metadata.Type == "formKey" && f.Value == null);
+        Assert.NotNull(linkField); // NPC has unset FormLink fields → null in DuckDB
+    }
+
+    [Fact]
+    public void GetRecord_FloatField_ReturnsNonNullValue()
+    {
+        // Float fields (height, weight) are value types — always non-null in DuckDB
+        using var repo = LoadedRepository();
+        var formKey = _fixture.Npc1FormKey.ToString();
+        var record = repo.GetRecord("npc_", formKey, null, winnerOnly: true);
+        Assert.NotNull(record);
+        var floatField = record.Fields.FirstOrDefault(f => f.Metadata.Type == "float");
+        Assert.NotNull(floatField);
+        Assert.NotNull(floatField.Value); // float value type is never null
     }
 }

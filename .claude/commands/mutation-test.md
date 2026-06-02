@@ -45,51 +45,36 @@ Status meanings:
 
 ## Handling survivors
 
-Triage each survivor in order. Stop at the first step that resolves it — do not skip ahead to suppression.
+Triage each survivor in order. Stop at the first step that resolves it. **Never add a suppression without explicit developer approval** — ask the developer and wait for a yes before writing any `// Stryker disable` comment or adding an `ignore-mutants` entry. The only code that may go untested is logging, and that is handled via `stryker-config.json`, never via comment annotations.
 
-**Step 1 — Needs coverage:** Add a test that fails on the mutated code and passes on the original. This is almost always the right answer.
+**Step 1 — Delete the code:** If the survivor guards a state that cannot happen (dead code, redundant guard, inert check), remove it entirely. Dead code that cannot be tested should not exist.
 
-**Step 2 — Delete the code:** If the survivor is a guard against a state that cannot happen, the guard is dead code. Remove it entirely.
+**Step 2 — Simplify the code:** If the construct is correct but overcomplicated (e.g. a null-coalescing `?? ""` on a value that cannot be null, a redundant condition), simplify it so the mutant no longer exists.
 
-**Step 3 — Simplify the code:** Redundant conditions can often be reduced so the mutant no longer exists.
+**Step 3 — Write a test:** If the code is necessary and cannot be simplified, write a test that kills the mutant — one that fails on the mutated code and passes on the original.
 
-**Step 4 — Config suppression (mutator category):** If a whole mutator category is inert by convention across the project (e.g. `String` mutations on exception message text), suppress it in `stryker-config.json` under `ignore-mutants` with a comment in the PR description explaining why.
+**Step 4 — Refactor to make it testable:** If a test cannot be written in the current design (e.g. the dependency is hidden, the branch is unreachable from any test), refactor the code to expose the seam. Untestable code is not acceptable — a survivor that reaches this step means the design needs to change, not that a suppression is warranted.
 
-**Step 5 — Source-level annotation (last resort):**
+**Suppression (requires explicit developer approval):** If you believe suppression is the only option after exhausting steps 1–4, stop and present the case to the developer. Do not write the annotation or config entry until you receive an explicit yes. If approved, use the format below.
 
-Before writing a `// Stryker disable` comment, you **must** invoke the rubber-duck agent:
-
-```
-/rubber-duck  [describe the mutant, the code, and your reasoning that it is inert]
-```
-
-The annotation must explain both why the code exists **and** why the mutation is inert. An annotation without reasoning is not acceptable and will be rejected in review.
-
-## Suppression format
+## Suppression format (only after explicit developer approval)
 
 ### Source-level (line)
 
 ```csharp
-// Stryker disable once <MutatorName>: <reason>
+// Stryker disable once <MutatorName>: <reason why the code exists> / <reason the mutation is inert>
 someCode();
 ```
 
-### Source-level (block)
-
-```csharp
-// Stryker disable <MutatorName>: <reason>
-someCode();
-moreCode();
-// Stryker restore <MutatorName>
-```
-
-### Config-level (mutator category across the project)
+### Config-level (mutator category across the project — preferred over source annotations)
 
 ```json
 "ignore-mutants": [
-  { "mutant": "StringLiteral", "description": "Exception message text is not tested by design" }
+  { "mutant": "StringLiteral", "description": "Logging statements are not tested by design" }
 ]
 ```
+
+Source-level annotations are a last resort even when suppression is approved — prefer a config-level entry for anything that applies project-wide. Annotations without reasoning (both why the code exists and why the mutation is inert) will be rejected in review.
 
 ### Common mutator names
 

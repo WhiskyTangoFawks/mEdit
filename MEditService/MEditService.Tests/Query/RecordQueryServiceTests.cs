@@ -1,3 +1,4 @@
+using DuckDB.NET.Data;
 using MEditService.Core.Edits;
 using MEditService.Core.Queries;
 using MEditService.Core.Records;
@@ -20,7 +21,7 @@ public class RecordQueryServiceTests : IClassFixture<TestPluginFixture>, IDispos
         var factory = new DuckDbRecordRepositoryFactory(reflector, new TableDdlBuilder(reflector));
         _manager = new SessionManager(factory, new PluginWriter(reflector, NullLogger<PluginWriter>.Instance));
         _manager.Load(fixture.DataFolder, fixture.PluginsTxtPath, GameRelease.Fallout4);
-        _svc = new RecordQueryService(_manager, new PendingChangeService(), reflector, new ConflictClassifier());
+        _svc = new RecordQueryService(_manager, MakePendingChangeService(), reflector, new ConflictClassifier());
     }
 
     public void Dispose() => _manager.Dispose();
@@ -252,7 +253,7 @@ public class RecordQueryServiceTests : IClassFixture<TestPluginFixture>, IDispos
         var fk = all.Items[0].FormKey;
 
         // Stage a pending change for this record
-        var changes = new PendingChangeService();
+        var changes = MakePendingChangeService();
         var newVal = System.Text.Json.JsonDocument.Parse("\"Frenzied\"").RootElement;
         changes.Upsert(fk, TestPluginFixture.PluginName, "npc_",
             new Dictionary<string, System.Text.Json.JsonElement> { ["aggression"] = newVal },
@@ -284,11 +285,18 @@ public class RecordQueryServiceTests : IClassFixture<TestPluginFixture>, IDispos
         Assert.Throws<InvalidOperationException>(() => unloaded.GetRecords("npc_", null, null, 10, 0));
     }
 
+    private static DuckDbPendingChangeService MakePendingChangeService()
+    {
+        var conn = new DuckDBConnection("DataSource=:memory:");
+        conn.Open();
+        return new DuckDbPendingChangeService(conn);
+    }
+
     private static RecordQueryService MakeUnloadedService()
     {
         var reflector = new SchemaReflector();
         var factory = new DuckDbRecordRepositoryFactory(reflector, new TableDdlBuilder(reflector));
         var manager = new SessionManager(factory, new PluginWriter(reflector, NullLogger<PluginWriter>.Instance));
-        return new RecordQueryService(manager, new PendingChangeService(), reflector, new ConflictClassifier());
+        return new RecordQueryService(manager, MakePendingChangeService(), reflector, new ConflictClassifier());
     }
 }

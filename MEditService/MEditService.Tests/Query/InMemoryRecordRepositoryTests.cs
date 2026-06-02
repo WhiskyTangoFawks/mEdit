@@ -214,4 +214,135 @@ public class InMemoryRecordRepositoryTests : IClassFixture<TestPluginFixture>
         var result = repo.GetRecords("npc_", null, null, 100, 0);
         Assert.All(result.Items, r => Assert.True(r.IsWinner));
     }
+
+    [Fact]
+    public void Index_BeforeUpdateWinners_NoRecordsAreWinners()
+    {
+        // Verifies that isWinner starts false and only becomes true after UpdateWinners
+        using var repo = new InMemoryRecordRepository(_reflector);
+        repo.Initialize(GameRelease.Fallout4);
+        var modPath = new ModPath(
+            ModKey.FromFileName(TestPluginFixture.PluginName),
+            Path.Combine(_fixture.DataFolder, TestPluginFixture.PluginName));
+        using var mod = Fallout4Mod.CreateFromBinaryOverlay(modPath, Fallout4Release.Fallout4);
+        repo.Index(mod, 0);
+        // UpdateWinners not called — records must still be non-winners
+        var result = repo.GetRecords("npc_", null, null, 100, 0);
+        Assert.All(result.Items, r => Assert.False(r.IsWinner));
+    }
+
+    // --- Index guard + idempotency ---
+
+    [Fact]
+    public void Index_BeforeInitialize_Throws()
+    {
+        using var repo = new InMemoryRecordRepository(_reflector);
+        var modPath = new ModPath(
+            ModKey.FromFileName(TestPluginFixture.PluginName),
+            Path.Combine(_fixture.DataFolder, TestPluginFixture.PluginName));
+        using var mod = Fallout4Mod.CreateFromBinaryOverlay(modPath, Fallout4Release.Fallout4);
+        Assert.Throws<InvalidOperationException>(() => repo.Index(mod, 0));
+    }
+
+    [Fact]
+    public void Index_SamePluginTwice_DoesNotDuplicateRecords()
+    {
+        using var repo = new InMemoryRecordRepository(_reflector);
+        repo.Initialize(GameRelease.Fallout4);
+        var modPath = new ModPath(
+            ModKey.FromFileName(TestPluginFixture.PluginName),
+            Path.Combine(_fixture.DataFolder, TestPluginFixture.PluginName));
+        using var mod = Fallout4Mod.CreateFromBinaryOverlay(modPath, Fallout4Release.Fallout4);
+        repo.Index(mod, 0);
+        repo.Index(mod, 0); // re-index same plugin
+        repo.UpdateWinners();
+        var count = repo.CountRecordsForPlugin("npc_", TestPluginFixture.PluginName);
+        Assert.Equal(TestPluginFixture.RecordCount, count);
+    }
+
+    // --- Connection ---
+
+    [Fact]
+    public void Connection_ThrowsNotSupportedException()
+    {
+        using var repo = new InMemoryRecordRepository(_reflector);
+        Assert.Throws<NotSupportedException>(() => _ = repo.Connection);
+    }
+
+    // --- GetRecords sort order ---
+
+    [Fact]
+    public void GetRecords_ResultsAreSortedAscendingByEditorId()
+    {
+        using var repo = LoadedRepository();
+        var result = repo.GetRecords("npc_", null, null, 100, 0);
+        var editorIds = result.Items.Select(r => r.EditorId).ToList();
+        var sorted = editorIds.OrderBy(e => e, StringComparer.OrdinalIgnoreCase).ToList();
+        Assert.Equal(sorted, editorIds);
+    }
+
+    // --- GetRecord winnerOnly with multiple overrides ---
+
+    [Fact]
+    public void GetRecord_WinnerOnly_ExcludesNonWinners()
+    {
+        var data = new PluginFixtureBuilder("inmem-winneronly").Build();
+        var modAPath = Path.Combine(data.DataFolder, "WinnerA.esm");
+
+        FormKey npcKey;
+        var modA = new Fallout4Mod(ModKey.FromFileName("WinnerA.esm"), Fallout4Release.Fallout4);
+        var npc = modA.Npcs.AddNew("WinnerTestNPC");
+        npcKey = npc.FormKey;
+        modA.WriteToBinary(modAPath);
+
+        using var modALoaded = Fallout4Mod.CreateFromBinaryOverlay(
+            new ModPath(ModKey.FromFileName("WinnerA.esm"), modAPath),
+            Fallout4Release.Fallout4);
+
+        var modB = new Fallout4Mod(ModKey.FromFileName("WinnerB.esp"), Fallout4Release.Fallout4);
+        modB.ModHeader.MasterReferences.Add(new MasterReference { Master = ModKey.FromFileName("WinnerA.esm") });
+        modB.Npcs.Set(modALoaded.Npcs.First().DeepCopy());
+
+        using var repo = new InMemoryRecordRepository(_reflector);
+        repo.Initialize(GameRelease.Fallout4);
+        repo.Index(modALoaded, 0);
+        repo.Index(modB, 1);
+        repo.UpdateWinners();
+
+        var record = repo.GetRecord("npc_", npcKey.ToString(), null, winnerOnly: true);
+
+        Assert.NotNull(record);
+        Assert.True(record.IsWinner);
+        Assert.Equal("WinnerB.esp", record.Plugin);
+        data.Dispose();
+    }
+
+    // --- SearchRecords ---
+
+    [Fact]
+    public void SearchRecords_SingleTable_ReturnsAllRecords()
+    {
+        using var repo = LoadedRepository();
+        var result = repo.SearchRecords(["npc_"], null, null, 100, 0);
+        Assert.Equal(TestPluginFixture.RecordCount, result.Total);
+        Assert.Equal(TestPluginFixture.RecordCount, result.Items.Count);
+    }
+
+    [Fact]
+    public void SearchRecords_WithSearch_FiltersResults()
+    {
+        using var repo = LoadedRepository();
+        var result = repo.SearchRecords(["npc_"], null, "TestNPC01", 100, 0);
+        Assert.Equal(1, result.Total);
+        Assert.Equal("TestNPC01", result.Items[0].EditorId);
+    }
+
+    [Fact]
+    public void SearchRecords_EmptyTableList_ReturnsEmpty()
+    {
+        using var repo = LoadedRepository();
+        var result = repo.SearchRecords([], null, null, 100, 0);
+        Assert.Equal(0, result.Total);
+        Assert.Empty(result.Items);
+    }
 }

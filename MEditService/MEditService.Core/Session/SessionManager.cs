@@ -15,6 +15,7 @@ public sealed class SessionManager : ISessionManager, IDisposable
     private readonly ILogger<SessionManager> _logger;
     private readonly IRecordRepositoryFactory _repositoryFactory;
     private readonly IPluginWriter _writer;
+    private readonly IPendingChangeLifecycle? _changeLifecycle;
     private IGameSession? _session;
     private IRecordRepository? _repository;
 
@@ -25,10 +26,12 @@ public sealed class SessionManager : ISessionManager, IDisposable
     public SessionManager(
         IRecordRepositoryFactory repositoryFactory,
         IPluginWriter writer,
+        IPendingChangeService? pendingChanges = null,
         ILogger<SessionManager>? logger = null)
     {
         _repositoryFactory = repositoryFactory;
         _writer = writer;
+        _changeLifecycle = pendingChanges as IPendingChangeLifecycle;
         _logger = logger ?? NullLogger<SessionManager>.Instance;
     }
 
@@ -72,6 +75,7 @@ public sealed class SessionManager : ISessionManager, IDisposable
                 _dataFolderPath = dataFolderPath;
                 _pluginsTxtPath = pluginsTxtPath;
                 _gameRelease = gameRelease;
+                _changeLifecycle?.OnSessionLoaded(repository.Connection);
                 _logger.LogInformation("Session load complete");
             }
         }
@@ -169,6 +173,7 @@ public sealed class SessionManager : ISessionManager, IDisposable
 
     private void DisposeCurrentSession()
     {
+        _changeLifecycle?.OnSessionUnloaded();
         _session?.Dispose();
         _session = null;
         _repository?.Dispose();

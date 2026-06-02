@@ -17,7 +17,8 @@ public sealed class DuckDbRecordRepository : IRecordRepository
     private readonly ILogger _logger;
     private readonly DuckDBConnection _connection;
     private IReadOnlyDictionary<string, RecordTableSchema>? _schemas;
-    private bool _disposed;
+
+    public DuckDBConnection Connection => _connection;
 
     public DuckDbRecordRepository(
         ISchemaReflector schemaReflector,
@@ -263,7 +264,6 @@ public sealed class DuckDbRecordRepository : IRecordRepository
             }
             else
             {
-                // Stryker disable once Conditional : scalar fields are never null in test records; the null path exists for optional fields absent from a record
                 value = reader.IsDBNull(5 + i) ? null : reader.GetValue(5 + i);
             }
             fields.Add(new FieldValue(col.ToFieldMetadata(), value));
@@ -272,8 +272,7 @@ public sealed class DuckDbRecordRepository : IRecordRepository
         return new RecordDetail(formKey, plugin, loadOrderIndex, isWinner, editorId, fields);
     }
 
-    // Stryker disable once Conditional : no test uses a record type with 0 schema columns; the empty-string branch is unreachable in tests
-    private static string ColumnList(RecordTableSchema schema) =>
+    internal static string ColumnList(RecordTableSchema schema) =>
         schema.RecordColumns.Count == 0
             ? ""
             : ", " + string.Join(", ", schema.RecordColumns.Select(c => $"\"{c.Name}\""));
@@ -319,7 +318,7 @@ public sealed class DuckDbRecordRepository : IRecordRepository
         cmd.ExecuteNonQuery();
     }
 
-    private static void AppendTyped(IDuckDBAppenderRow row, object? value, string duckDbType)
+    internal static void AppendTyped(IDuckDBAppenderRow row, object? value, string duckDbType)
     {
         if (value == null) { row.AppendNullValue(); return; }
         switch (duckDbType)
@@ -329,20 +328,13 @@ public sealed class DuckDbRecordRepository : IRecordRepository
             case "BIGINT": row.AppendValue((long?)Convert.ToInt64(value)); break;
             case "FLOAT": row.AppendValue((float?)Convert.ToSingle(value)); break;
             case "DOUBLE": row.AppendValue((double?)Convert.ToDouble(value)); break;
-            case "VARCHAR": row.AppendValue(value.ToString() ?? ""); break;
+            case "VARCHAR": row.AppendValue(value.ToString()); break;
             default: row.AppendValue(JsonSerializer.Serialize(value)); break;
         }
     }
 
     private IReadOnlyDictionary<string, RecordTableSchema> RequireSchemas() =>
-        // Stryker disable once String : exception message text is not part of the tested contract
         _schemas ?? throw new InvalidOperationException("Call Initialize before using the repository.");
 
-    public void Dispose()
-    {
-        // Stryker disable once Statement : DuckDBConnection.Dispose is idempotent; removing the guard produces no observable difference in tests
-        if (_disposed) return;
-        _disposed = true;
-        _connection.Dispose();
-    }
+    public void Dispose() => _connection.Dispose();
 }

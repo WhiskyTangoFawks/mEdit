@@ -55,40 +55,52 @@ If anything fails, fix it now. Do not proceed to Gate 3 until Gate 2 is clean.
 
 ---
 
-## Gate 3 — Backend tests  *(backend changes only)*
+## Gates 3 & 4 — Tests  *(run applicable gates in parallel as sub-agents)*
 
-```bash
-cd MEditService
-dotnet test
-```
+Gates 3 and 4 are independent. If both apply, spawn them as sub-agents in a **single message** so they run concurrently. Each sub-agent starts with a clean context — the output-heavy test runs never touch the main window.
 
-All tests must pass. A single failure means the gate is red — fix before continuing.
+### Gate 3 — Backend tests  *(backend changes only)*
+
+Spawn a sub-agent with this prompt (fill in the bracketed parts from your scope):
+
+> Run `cd MEditService && dotnet test` from the repo root `/home/wayne/Games/FO4/mEdit`.
+> Changed C# files: [list the files from Step 0].
+> Report back: PASS or FAIL, total test count, and for any failures — the test name, the failure message, and the file+line where it failed. Nothing else.
+
+**If the sub-agent reports FAIL:** fix the failures in the main window, then spawn a new Gate 3 sub-agent with the same prompt to verify. Repeat until green before continuing to Gate 5.
+
+### Gate 4 — Frontend tests  *(frontend changes or api.ts regenerated)*
+
+Spawn a sub-agent with this prompt:
+
+> Run these two commands from the repo root `/home/wayne/Games/FO4/mEdit`:
+> 1. `cd medit-vscode && npm run test:unit`
+> 2. `cd medit-vscode && npm run test:integration`
+> `test:integration` runs inside a real VS Code process and takes ~10s — wait for it.
+> Report back: PASS or FAIL for each suite, and for any failures — the test name, the failure message, and the file+line. Nothing else.
+
+**If the sub-agent reports FAIL:** fix the failures in the main window, then spawn a new Gate 4 sub-agent with the same prompt to verify. Repeat until green.
 
 ---
 
-## Gate 4 — Frontend tests  *(frontend changes or api.ts regenerated)*
+## Gate 5 — Mutation tests  *(MEditService.Core changes only; runs after Gate 3 passes)*
 
-```bash
-cd medit-vscode
-npm run test:unit
-npm run test:integration
-```
+Gate 5 depends on Gate 3. Only spawn this after Gate 3 is green.
 
-Both suites must pass. `test:integration` runs inside a real VS Code process and takes ~10s.
+Spawn a sub-agent with this prompt (fill in the bracketed parts):
 
----
+> Run `cd MEditService && python stryker-report.py` from the repo root `/home/wayne/Games/FO4/mEdit`.
+> Changed Core files: [list the MEditService.Core/**/*.cs files from Step 0].
+> The script auto-scopes to those files. Allow up to 3 minutes.
+> Report back: overall PASS or FAIL, and for each Survived or NoCoverage mutant — the file, line number, mutator name, and the 3-line source context. Killed mutants need not be mentioned. Nothing else.
 
-## Gate 5 — Mutation tests  *(MEditService.Core changes only)*
-
-Run `/mutation-test` scoped to the files you changed. See that skill for how to set the `mutate` glob in `stryker-config.json`.
-
-**Survivors block completion.** Triage each one: add a test that kills it, simplify the code, or (last resort after subagent rubber-duck sign-off) suppress with justification. Do not move on with untriaged survivors.
+**If the sub-agent reports survivors:** triage each one in the main window per the rules in `/mutation-test`. Once triaged (tests added, code deleted, or suppression justified), spawn a new Gate 5 sub-agent with the same prompt to verify. Suppression requires rubber-duck sign-off before the re-run.
 
 ---
 
 ## Gate 6 — Code review
 
-Run `/thermo-nuclear-code-review`. Address any findings before declaring done.
+Run `/code-review`. Address any findings before declaring done.
 
 ---
 

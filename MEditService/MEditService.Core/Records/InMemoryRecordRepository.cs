@@ -1,3 +1,4 @@
+using DuckDB.NET.Data;
 using MEditService.Core.Queries;
 using MEditService.Core.Schema;
 using Mutagen.Bethesda;
@@ -15,6 +16,9 @@ public sealed class InMemoryRecordRepository : IRecordRepository
     {
         _schemaReflector = schemaReflector;
     }
+
+    public DuckDBConnection Connection =>
+        throw new NotSupportedException("InMemoryRecordRepository does not have a DuckDB connection.");
 
     public void Initialize(GameRelease release) =>
         _schemas = _schemaReflector.GetSchemas(release);
@@ -48,7 +52,6 @@ public sealed class InMemoryRecordRepository : IRecordRepository
     {
         foreach (var (_, table) in _tables)
         {
-            if (table.Count == 0) continue;
             var maxByFormKey = table
                 .GroupBy(r => r.FormKey)
                 .ToDictionary(g => g.Key, g => g.Max(r => r.LoadOrderIndex));

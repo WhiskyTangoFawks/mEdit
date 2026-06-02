@@ -1,4 +1,5 @@
 using System.Text.Json;
+using DuckDB.NET.Data;
 using MEditService.Core.Edits;
 using MEditService.Core.Queries;
 using MEditService.Core.Records;
@@ -17,12 +18,19 @@ public sealed class EditOrchestratorTests
 {
     private static JsonElement J(string raw) => JsonDocument.Parse(raw).RootElement.Clone();
 
+    private static DuckDbPendingChangeService MakePendingChangeService()
+    {
+        var conn = new DuckDBConnection("DataSource=:memory:");
+        conn.Open();
+        return new DuckDbPendingChangeService(conn);
+    }
+
     private static (EditOrchestrator orchestrator, SessionManager manager) MakeOrchestrator()
     {
         var reflector = new SchemaReflector();
         var factory = new DuckDbRecordRepositoryFactory(reflector, new TableDdlBuilder(reflector));
         var manager = new SessionManager(factory, new PluginWriter(reflector, NullLogger<PluginWriter>.Instance));
-        var changes = new PendingChangeService();
+        var changes = MakePendingChangeService();
         var query = new RecordQueryService(manager, changes, reflector, new ConflictClassifier());
         var writer = new PluginWriter(reflector, NullLogger<PluginWriter>.Instance);
         var orchestrator = new EditOrchestrator(manager, query, writer, changes);
@@ -92,7 +100,7 @@ public sealed class EditOrchestratorTests
                 data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4, "TestPlugin.esp");
 
             var reflector = new SchemaReflector();
-            var changes = new PendingChangeService();
+            var changes = MakePendingChangeService();
             var query = new RecordQueryService(sessionStub, changes, reflector, new ConflictClassifier());
             var writer = new PluginWriter(reflector, NullLogger<PluginWriter>.Instance);
             var orchestrator = new EditOrchestrator(sessionStub, query, writer, changes);
@@ -209,7 +217,7 @@ public sealed class EditOrchestratorTests
                 data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4, "Source.esp");
 
             var reflector = new SchemaReflector();
-            var changes = new PendingChangeService();
+            var changes = MakePendingChangeService();
             var query = new RecordQueryService(sessionStub, changes, reflector, new ConflictClassifier());
             var writer = new PluginWriter(reflector, NullLogger<PluginWriter>.Instance);
             var orchestrator = new EditOrchestrator(sessionStub, query, writer, changes);

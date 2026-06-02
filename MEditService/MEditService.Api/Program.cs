@@ -42,7 +42,8 @@ try
     builder.Services.AddSingleton<IConflictClassifier, ConflictClassifier>();
     builder.Services.AddSingleton<IPluginWriter, PluginWriter>();
     builder.Services.AddSingleton<ISessionManager, SessionManager>();
-    builder.Services.AddSingleton<IPendingChangeService, PendingChangeService>();
+    builder.Services.AddSingleton<DuckDbPendingChangeService>();
+    builder.Services.AddSingleton<IPendingChangeService>(sp => sp.GetRequiredService<DuckDbPendingChangeService>());
     builder.Services.AddSingleton<IRecordQueryService, RecordQueryService>();
     builder.Services.AddSingleton<IEditOrchestrator, EditOrchestrator>();
 
