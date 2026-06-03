@@ -172,7 +172,7 @@ public sealed class SchemaReflector : ISchemaReflector
         typeof(ITranslatedStringGetter).IsAssignableFrom(type);
 
     private static bool IsFormLink(Type type) =>
-        type.IsInterface &&
+        type.IsInterface && type.IsGenericType &&
         typeof(IFormLinkGetter).IsAssignableFrom(type);
 
     // IReadOnlyList<T> only — that's what Mutagen getter interfaces expose for collections.
@@ -197,6 +197,19 @@ public sealed class SchemaReflector : ISchemaReflector
         var linked = core.IsGenericType ? core.GetGenericArguments()[0] : null;
         return linked != null && getterTypeToTable.TryGetValue(linked, out var tn)
             ? [tn] : _empty;
+    }
+
+    // Retrieve the concrete mutable class (e.g. RankPlacement) via ILoquiRegistration.SetterType.
+    private static Type? GetSetterType(Type getterInterface)
+    {
+        try
+        {
+            var regProp = getterInterface.GetProperty(
+                "StaticRegistration", BindingFlags.Public | BindingFlags.Static);
+            var reg = regProp?.GetValue(null);
+            return reg?.GetType().GetProperty("SetterType")?.GetValue(reg) as Type;
+        }
+        catch { return null; }
     }
 
     // ── Sub-schema building ───────────────────────────────────────────────────
@@ -257,6 +270,42 @@ public sealed class SchemaReflector : ISchemaReflector
         return null;
     }
 
+    // ── Primitive type dispatch shared by GetColumnInfo and GetSubFieldInfo ─────
+
+    private static bool TryMapPrimitive(
+        Type core,
+        out string duckDbType,
+        out string apiType,
+        out Func<JsonElement, object?> converter)
+    {
+        if (core == typeof(bool))
+        { duckDbType = "BOOLEAN"; apiType = "bool"; converter = v => (object)v.GetBoolean(); return true; }
+        if (core == typeof(byte))
+        { duckDbType = "INTEGER"; apiType = "int"; converter = v => (object)(byte)v.GetInt32(); return true; }
+        if (core == typeof(sbyte))
+        { duckDbType = "INTEGER"; apiType = "int"; converter = v => (object)(sbyte)v.GetInt32(); return true; }
+        if (core == typeof(short))
+        { duckDbType = "INTEGER"; apiType = "int"; converter = v => (object)(short)v.GetInt32(); return true; }
+        if (core == typeof(ushort))
+        { duckDbType = "INTEGER"; apiType = "int"; converter = v => (object)(ushort)v.GetInt32(); return true; }
+        if (core == typeof(int))
+        { duckDbType = "INTEGER"; apiType = "int"; converter = v => (object)v.GetInt32(); return true; }
+        if (core == typeof(uint))
+        { duckDbType = "INTEGER"; apiType = "int"; converter = v => (object)v.GetUInt32(); return true; }
+        if (core == typeof(long))
+        { duckDbType = "BIGINT"; apiType = "int"; converter = v => (object)v.GetInt64(); return true; }
+        if (core == typeof(ulong))
+        { duckDbType = "BIGINT"; apiType = "int"; converter = v => (object)v.GetUInt64(); return true; }
+        if (core == typeof(float))
+        { duckDbType = "FLOAT"; apiType = "float"; converter = v => (object)v.GetSingle(); return true; }
+        if (core == typeof(double))
+        { duckDbType = "DOUBLE"; apiType = "float"; converter = v => (object)v.GetDouble(); return true; }
+        if (core == typeof(string))
+        { duckDbType = "VARCHAR"; apiType = "string"; converter = v => v.GetString(); return true; }
+        duckDbType = ""; apiType = ""; converter = _ => null;
+        return false;
+    }
+
     // ── Per-sub-field reflection (operates on object, not IMajorRecordGetter) ─
 
     private static SubFieldSpec? GetSubFieldInfo(
@@ -293,18 +342,8 @@ public sealed class SchemaReflector : ISchemaReflector
             };
         }
 
-        if (core == typeof(bool)) return new(colName, "bool", _empty, _empty, Getter(), Applier(v => (object)v.GetBoolean()));
-        if (core == typeof(byte)) return new(colName, "int", _empty, _empty, Getter(), Applier(v => (object)(byte)v.GetInt32()));
-        if (core == typeof(sbyte)) return new(colName, "int", _empty, _empty, Getter(), Applier(v => (object)(sbyte)v.GetInt32()));
-        if (core == typeof(short)) return new(colName, "int", _empty, _empty, Getter(), Applier(v => (object)(short)v.GetInt32()));
-        if (core == typeof(ushort)) return new(colName, "int", _empty, _empty, Getter(), Applier(v => (object)(ushort)v.GetInt32()));
-        if (core == typeof(int)) return new(colName, "int", _empty, _empty, Getter(), Applier(v => (object)v.GetInt32()));
-        if (core == typeof(uint)) return new(colName, "int", _empty, _empty, Getter(), Applier(v => (object)v.GetUInt32()));
-        if (core == typeof(long)) return new(colName, "int", _empty, _empty, Getter(), Applier(v => (object)v.GetInt64()));
-        if (core == typeof(ulong)) return new(colName, "int", _empty, _empty, Getter(), Applier(v => (object)v.GetUInt64()));
-        if (core == typeof(float)) return new(colName, "float", _empty, _empty, Getter(), Applier(v => (object)v.GetSingle()));
-        if (core == typeof(double)) return new(colName, "float", _empty, _empty, Getter(), Applier(v => (object)v.GetDouble()));
-        if (core == typeof(string)) return new(colName, "string", _empty, _empty, Getter(), Applier(v => v.GetString()));
+        if (TryMapPrimitive(core, out _, out var primApiType, out var primConv))
+            return new(colName, primApiType, _empty, _empty, Getter(), Applier(primConv));
 
         if (IsTranslatedString(core))
         {
@@ -413,42 +452,9 @@ public sealed class SchemaReflector : ISchemaReflector
             };
         }
 
-        if (core == typeof(bool))
-            return new("BOOLEAN", r => TryGet(r, prop), "bool", _empty, _empty,
-                MakeApply(v => (object)v.GetBoolean()));
-        if (core == typeof(byte))
-            return new("INTEGER", r => TryGet(r, prop), "int", _empty, _empty,
-                MakeApply(v => (object)(byte)v.GetInt32()));
-        if (core == typeof(sbyte))
-            return new("INTEGER", r => TryGet(r, prop), "int", _empty, _empty,
-                MakeApply(v => (object)(sbyte)v.GetInt32()));
-        if (core == typeof(short))
-            return new("INTEGER", r => TryGet(r, prop), "int", _empty, _empty,
-                MakeApply(v => (object)(short)v.GetInt32()));
-        if (core == typeof(ushort))
-            return new("INTEGER", r => TryGet(r, prop), "int", _empty, _empty,
-                MakeApply(v => (object)(ushort)v.GetInt32()));
-        if (core == typeof(int))
-            return new("INTEGER", r => TryGet(r, prop), "int", _empty, _empty,
-                MakeApply(v => (object)v.GetInt32()));
-        if (core == typeof(uint))
-            return new("INTEGER", r => TryGet(r, prop), "int", _empty, _empty,
-                MakeApply(v => (object)v.GetUInt32()));
-        if (core == typeof(long))
-            return new("BIGINT", r => TryGet(r, prop), "int", _empty, _empty,
-                MakeApply(v => (object)v.GetInt64()));
-        if (core == typeof(ulong))
-            return new("BIGINT", r => TryGet(r, prop), "int", _empty, _empty,
-                MakeApply(v => (object)v.GetUInt64()));
-        if (core == typeof(float))
-            return new("FLOAT", r => TryGet(r, prop), "float", _empty, _empty,
-                MakeApply(v => (object)v.GetSingle()));
-        if (core == typeof(double))
-            return new("DOUBLE", r => TryGet(r, prop), "float", _empty, _empty,
-                MakeApply(v => (object)v.GetDouble()));
-        if (core == typeof(string))
-            return new("VARCHAR", r => TryGet(r, prop), "string", _empty, _empty,
-                MakeApply(v => v.GetString()));
+        if (TryMapPrimitive(core, out var primDuckDb, out var primApiType, out var primConv))
+            return new(primDuckDb, r => TryGet(r, prop), primApiType, _empty, _empty,
+                MakeApply(primConv));
 
         if (IsTranslatedString(core))
             return new("VARCHAR", r =>
@@ -513,16 +519,16 @@ public sealed class SchemaReflector : ISchemaReflector
                         if (json.ValueKind != JsonValueKind.Array) return;
                         var rp = record.GetType()
                             .GetProperty(capturedPName, BindingFlags.Public | BindingFlags.Instance);
-                        if (rp == null) return;
+                        if (rp == null || !rp.CanWrite) return;
 
                         var listType = rp.PropertyType;
                         var newList = Activator.CreateInstance(listType)!;
                         var addMethod = listType.GetMethod("Add")!;
 
-                        // Derive the concrete element type from the mutable list's generic argument —
-                        // the registration SetterType is an interface (e.g. IRankPlacement), not the
-                        // instantiable concrete class (RankPlacement).
-                        Type? setterType = listType.IsGenericType
+                        // Derive the concrete element type from the mutable list's generic argument,
+                        // not from GetSetterType — which returns the setter *interface* (e.g.
+                        // IRankPlacement), not the instantiable concrete class (RankPlacement).
+                        Type? setterType = capturedIsLoqui && listType.IsGenericType
                             ? listType.GetGenericArguments()[0]
                             : null;
 
@@ -539,10 +545,10 @@ public sealed class SchemaReflector : ISchemaReflector
                                     item = Activator.CreateInstance(flType, fk);
                                 }
                             }
-                            else if (capturedIsLoqui && setterType != null)
+                            else if (capturedIsLoqui && setterType != null && capturedSubFields != null)
                             {
                                 var elemObj = Activator.CreateInstance(setterType)!;
-                                foreach (var sf in capturedSubFields!)
+                                foreach (var sf in capturedSubFields)
                                 {
                                     if (sf.Apply == null) continue;
                                     if (elem.TryGetProperty(sf.Name, out var sfVal))
@@ -585,7 +591,32 @@ public sealed class SchemaReflector : ISchemaReflector
                 catch { return null; }
             };
 
-            return new("VARCHAR", extractor, "struct", _empty, _empty, null,
+            var setterType = GetSetterType(core);
+            Action<IMajorRecord, JsonElement>? apply = null;
+            if (setterType != null)
+            {
+                apply = (record, json) =>
+                {
+                    try
+                    {
+                        if (json.ValueKind != JsonValueKind.Object) return;
+                        var rp = record.GetType()
+                            .GetProperty(capturedPName, BindingFlags.Public | BindingFlags.Instance);
+                        if (rp == null) return;
+                        var obj = rp.GetValue(record) ?? Activator.CreateInstance(setterType)!;
+                        foreach (var sf in capturedSF)
+                        {
+                            if (sf.Apply == null) continue;
+                            if (json.TryGetProperty(sf.Name, out var sfVal))
+                                sf.Apply(obj, sfVal);
+                        }
+                        if (rp.CanWrite) rp.SetValue(record, obj);
+                    }
+                    catch { }
+                };
+            }
+
+            return new("VARCHAR", extractor, "struct", _empty, _empty, apply,
                 SubFieldMetas: subFieldMetas);
         }
 

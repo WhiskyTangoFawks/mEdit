@@ -51,23 +51,17 @@ public sealed class RecordQueryService : IRecordQueryService
     public RecordDetail? GetRecord(string formKey)
     {
         var repository = RequireRepository();
-        foreach (var tableName in RequireSchemas().Keys)
-        {
-            var detail = repository.GetRecord(tableName, formKey, plugin: null, winnerOnly: true);
-            if (detail != null) return detail;
-        }
-        return null;
+        var tableName = repository.FindRecordType(formKey);
+        if (tableName == null) return null;
+        return repository.GetRecord(tableName, formKey, plugin: null, winnerOnly: true);
     }
 
     public RecordDetail? GetRecordForPlugin(string formKey, string plugin)
     {
         var repository = RequireRepository();
-        foreach (var tableName in RequireSchemas().Keys)
-        {
-            var detail = repository.GetRecord(tableName, formKey, plugin, winnerOnly: false);
-            if (detail != null) return detail;
-        }
-        return null;
+        var tableName = repository.FindRecordType(formKey);
+        if (tableName == null) return null;
+        return repository.GetRecord(tableName, formKey, plugin, winnerOnly: false);
     }
 
     public string? GetRecordType(string formKey) =>

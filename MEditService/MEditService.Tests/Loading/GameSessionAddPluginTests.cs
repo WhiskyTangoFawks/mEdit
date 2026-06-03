@@ -131,6 +131,35 @@ public sealed class GameSessionAddPluginTests : IClassFixture<TestPluginFixture>
         Assert.Equal(first.LoadOrderIndex + 1, second.LoadOrderIndex);
     }
 
+    [Fact]
+    public void AddPlugin_MetadataFields_MatchConstructorPathForSamePlugin()
+    {
+        using var data = new PluginFixtureBuilder("gs-add-consistency")
+            .WithPlugin("Base.esm", listed: false)
+            .WithPlugin("WithContent.esp", mod =>
+            {
+                mod.ModHeader.MasterReferences.Add(new Mutagen.Bethesda.Plugins.Records.MasterReference
+                {
+                    Master = Mutagen.Bethesda.Plugins.ModKey.FromFileName("Base.esm")
+                });
+                mod.Npcs.AddNew("Npc1");
+                mod.Npcs.AddNew("Npc2");
+            })
+            .Build();
+
+        using var constructorSession = new GameSession(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+        var constructorMetadata = constructorSession.Plugins.Single(p => p.Name == "WithContent.esp");
+
+        using var addPluginSession = new GameSession(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+        var pluginPath = Path.Combine(data.DataFolder, "WithContent.esp");
+        var addPluginMetadata = addPluginSession.AddPlugin(pluginPath);
+
+        Assert.Equal(constructorMetadata.RecordCount, addPluginMetadata.RecordCount);
+        Assert.Equal(constructorMetadata.Masters, addPluginMetadata.Masters);
+        Assert.Equal(constructorMetadata.IsLight, addPluginMetadata.IsLight);
+        Assert.Equal(constructorMetadata.IsMaster, addPluginMetadata.IsMaster);
+    }
+
     private static void WriteEmptyPlugin(string path, GameRelease release)
     {
         var modKey = Mutagen.Bethesda.Plugins.ModKey.FromFileName(Path.GetFileName(path));

@@ -30,19 +30,11 @@ public sealed class EditOrchestrator : IEditOrchestrator
         string source,
         string? description)
     {
-        var session = _sessionManager.Session;
-        if (session == null) return new StageEditResult.NoSession();
-
-        var pluginMeta = session.Plugins.FirstOrDefault(p =>
-            p.Name.Equals(plugin, StringComparison.OrdinalIgnoreCase));
-        if (pluginMeta?.IsImmutable == true)
-            return new StageEditResult.PluginImmutable(plugin);
-
-        var recordType = _query.GetRecordType(formKey);
-        if (recordType == null) return new StageEditResult.RecordNotFound();
+        var (earlyOut, session, recordType) = ValidateEditContext(formKey, plugin);
+        if (earlyOut != null) return earlyOut;
 
         var readOnlyFields = fields.Keys
-            .Where(f => _writer.IsReadOnly(session.GameRelease, recordType, f))
+            .Where(f => _writer.IsReadOnly(session!.GameRelease, recordType!, f))
             .ToList();
         if (readOnlyFields.Count > 0)
             return new StageEditResult.ReadOnlyFields(readOnlyFields);
@@ -58,22 +50,14 @@ public sealed class EditOrchestrator : IEditOrchestrator
             }
         }
 
-        var staged = _changes.Upsert(formKey, plugin, recordType, fields, source, description, oldValues);
+        var staged = _changes.Upsert(formKey, plugin, recordType!, fields, source, description, oldValues);
         return new StageEditResult.Staged(staged);
     }
 
     public StageEditResult CopyRecordTo(string formKey, string targetPlugin, string source)
     {
-        var session = _sessionManager.Session;
-        if (session == null) return new StageEditResult.NoSession();
-
-        var pluginMeta = session.Plugins.FirstOrDefault(p =>
-            p.Name.Equals(targetPlugin, StringComparison.OrdinalIgnoreCase));
-        if (pluginMeta?.IsImmutable == true)
-            return new StageEditResult.PluginImmutable(targetPlugin);
-
-        var recordType = _query.GetRecordType(formKey);
-        if (recordType == null) return new StageEditResult.RecordNotFound();
+        var (earlyOut, _, recordType) = ValidateEditContext(formKey, targetPlugin);
+        if (earlyOut != null) return earlyOut;
 
         var winner = _query.GetRecord(formKey);
         if (winner == null) return new StageEditResult.RecordNotFound();
@@ -90,7 +74,24 @@ public sealed class EditOrchestrator : IEditOrchestrator
                 oldValues[fv.Metadata.Name] = JsonSerializer.SerializeToElement(fv.Value);
         }
 
-        var staged = _changes.Upsert(formKey, targetPlugin, recordType, fields, source, null, oldValues);
+        var staged = _changes.Upsert(formKey, targetPlugin, recordType!, fields, source, null, oldValues);
         return new StageEditResult.Staged(staged);
+    }
+
+    private (StageEditResult? earlyOut, IGameSession? session, string? recordType) ValidateEditContext(
+        string formKey, string plugin)
+    {
+        var session = _sessionManager.Session;
+        if (session == null) return (new StageEditResult.NoSession(), null, null);
+
+        var pluginMeta = session.Plugins.FirstOrDefault(p =>
+            p.Name.Equals(plugin, StringComparison.OrdinalIgnoreCase));
+        if (pluginMeta?.IsImmutable == true)
+            return (new StageEditResult.PluginImmutable(plugin), null, null);
+
+        var recordType = _query.GetRecordType(formKey);
+        if (recordType == null) return (new StageEditResult.RecordNotFound(), null, null);
+
+        return (null, session, recordType);
     }
 }

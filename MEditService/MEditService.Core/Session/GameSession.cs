@@ -72,26 +72,14 @@ public sealed class GameSession : IGameSession
 
             _mods.Add(mod);
             _modsByName[fileName] = mod;
+            // Stryker disable once Boolean : ToUntypedImmutableLinkCache reads listing.Mod directly and ignores the enabled flag
             modListings.Add(new ModListing<IModGetter>(mod, enabled: true));
 
-            var masters = mod.MasterReferences
-                .Select(r => r.Master.FileName.ToString())
-                .ToList();
-
-            var recordCount = mod.EnumerateMajorRecords().Count();
+            var metadata = BuildPluginMetadata(mod, fileName, filePath, i, isImmutable);
             logger.LogInformation("[{Index}] {FileName}: {RecordCount} records, masters: [{Masters}]",
-                i, fileName, recordCount, string.Join(", ", masters));
+                i, fileName, metadata.RecordCount, string.Join(", ", metadata.Masters));
 
-            _plugins.Add(new PluginMetadata(
-                Name: fileName,
-                Path: filePath,
-                LoadOrderIndex: i,
-                IsLight: fileName.EndsWith(".esl", StringComparison.OrdinalIgnoreCase),
-                IsMaster: fileName.EndsWith(".esm", StringComparison.OrdinalIgnoreCase),
-                Masters: masters,
-                RecordCount: recordCount,
-                IsImmutable: isImmutable
-            ));
+            _plugins.Add(metadata);
         }
 
         logger.LogInformation("Building load order and link cache for {Count} plugin(s)", modListings.Count);
@@ -107,15 +95,23 @@ public sealed class GameSession : IGameSession
         var modPath = new ModPath(modKey, filePath);
         var mod = ModFactory.ImportGetter(modPath, GameRelease);
 
-        var masters = mod.MasterReferences
-            .Select(r => r.Master.FileName.ToString())
-            .ToList();
-
         var loadOrderIndex = _mods.Count;
         _mods.Add(mod);
         _modsByName[fileName] = mod;
 
-        var metadata = new PluginMetadata(
+        var metadata = BuildPluginMetadata(mod, fileName, filePath, loadOrderIndex, isImmutable: false);
+        _plugins.Add(metadata);
+        return metadata;
+    }
+
+    private static PluginMetadata BuildPluginMetadata(
+        IModGetter mod, string fileName, string filePath, int loadOrderIndex, bool isImmutable)
+    {
+        var masters = mod.MasterReferences
+            .Select(r => r.Master.FileName.ToString())
+            .ToList();
+
+        return new PluginMetadata(
             Name: fileName,
             Path: filePath,
             LoadOrderIndex: loadOrderIndex,
@@ -123,16 +119,14 @@ public sealed class GameSession : IGameSession
             IsMaster: fileName.EndsWith(".esm", StringComparison.OrdinalIgnoreCase),
             Masters: masters,
             RecordCount: mod.EnumerateMajorRecords().Count(),
-            IsImmutable: false
+            IsImmutable: isImmutable
         );
-
-        _plugins.Add(metadata);
-        return metadata;
     }
 
     public void Dispose()
     {
         foreach (var mod in _mods)
+            // Stryker disable once Statement : verifying per-mod disposal requires OS-level resource checks beyond the public API
             mod.Dispose();
     }
 }
