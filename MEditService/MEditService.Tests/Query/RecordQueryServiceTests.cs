@@ -7,10 +7,11 @@ using MEditService.Core.Session;
 using Microsoft.Extensions.Logging.Abstractions;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Fallout4;
+using Mutagen.Bethesda.Plugins;
 
 namespace MEditService.Tests.Query;
 
-public class RecordQueryServiceTests : IClassFixture<TestPluginFixture>, IDisposable
+public sealed class RecordQueryServiceTests : IClassFixture<TestPluginFixture>, IDisposable
 {
     private readonly SessionManager _manager;
     private readonly RecordQueryService _svc;
@@ -479,6 +480,195 @@ public class RecordQueryServiceTests : IClassFixture<TestPluginFixture>, IDispos
         svc.GetRecordForPlugin(fk, TestPluginFixture.PluginName);
 
         Assert.False(spy.LastWinnerOnly);
+    }
+
+    // --- GetPluginRecordTypes — staged records ---
+
+    [Fact]
+    public void GetPluginRecordTypes_IncludesStagedRecordsNotInIndex()
+    {
+        FormKey npcKey = default;
+        var data = new PluginFixtureBuilder("rqs-staged-types")
+            .WithPlugin("Source.esp", mod => npcKey = mod.Npcs.AddNew("TestNPC").FormKey)
+            .WithPlugin("Override.esp")
+            .Build();
+        using (data)
+        {
+            var reflector = new SchemaReflector();
+            var factory = new DuckDbRecordRepositoryFactory(reflector, new TableDdlBuilder(reflector));
+            using var manager = new SessionManager(factory, new PluginWriter(reflector, NullLogger<PluginWriter>.Instance));
+            manager.Load(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+            var changes = MakePendingChangeService();
+            changes.Upsert(npcKey.ToString(), "Override.esp", "npc_",
+                new Dictionary<string, System.Text.Json.JsonElement> { ["aggression"] = System.Text.Json.JsonDocument.Parse("\"Frenzied\"").RootElement },
+                "user", null, new Dictionary<string, System.Text.Json.JsonElement>());
+            var svc = new RecordQueryService(manager, changes, reflector, new ConflictClassifier());
+
+            var result = svc.GetPluginRecordTypes("Override.esp");
+
+            var npc = Assert.Single(result, r => r.Type == "npc_");
+            Assert.Equal(1, npc.Count);
+        }
+    }
+
+    [Fact]
+    public void GetPluginRecordTypes_StagedCountAddedToCommittedCount()
+    {
+        FormKey npcKey1 = default;
+        FormKey npcKey2 = default;
+        var data = new PluginFixtureBuilder("rqs-staged-types-merge")
+            .WithPlugin("Source.esp", mod =>
+            {
+                npcKey1 = mod.Npcs.AddNew("NPC1").FormKey;
+                npcKey2 = mod.Npcs.AddNew("NPC2").FormKey;
+            })
+            .WithPlugin("Override.esp", mod => mod.Npcs.AddNew("NPC1") /* commits one override */)
+            .Build();
+        using (data)
+        {
+            // Override.esp has 1 committed record; stage a 2nd one
+            var reflector = new SchemaReflector();
+            var factory = new DuckDbRecordRepositoryFactory(reflector, new TableDdlBuilder(reflector));
+            using var manager = new SessionManager(factory, new PluginWriter(reflector, NullLogger<PluginWriter>.Instance));
+            manager.Load(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+            var changes = MakePendingChangeService();
+            // stage npcKey2 into Override.esp (not yet committed)
+            changes.Upsert(npcKey2.ToString(), "Override.esp", "npc_",
+                new Dictionary<string, System.Text.Json.JsonElement> { ["aggression"] = System.Text.Json.JsonDocument.Parse("\"Frenzied\"").RootElement },
+                "user", null, new Dictionary<string, System.Text.Json.JsonElement>());
+            var svc = new RecordQueryService(manager, changes, reflector, new ConflictClassifier());
+
+            var result = svc.GetPluginRecordTypes("Override.esp");
+
+            var npc = Assert.Single(result, r => r.Type == "npc_");
+            Assert.Equal(2, npc.Count);
+        }
+    }
+
+    [Fact]
+    public void GetPluginRecordTypes_StagedAlreadyCommittedRecordIsNotCounted()
+    {
+        // Override.esp has a committed NPC override that is NOT the winner (Winner.esp comes later).
+        // Staging a pending edit to that committed key must not double-count it.
+        FormKey baseNpcKey = default;
+        var dataFolder = Path.Combine(Path.GetTempPath(), $"rqs-staged-types-dedup-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dataFolder);
+        try
+        {
+            var baseMod = new Fallout4Mod(ModKey.FromFileName("Base.esp"), Fallout4Release.Fallout4);
+            baseNpcKey = baseMod.Npcs.AddNew("BaseNPC").FormKey;
+            baseMod.WriteToBinary(Path.Combine(dataFolder, "Base.esp"));
+
+            var overrideMod = new Fallout4Mod(ModKey.FromFileName("Override.esp"), Fallout4Release.Fallout4);
+            var overrideNpc = overrideMod.Npcs.GetOrAddAsOverride(baseMod.Npcs.First());
+            overrideNpc.EditorID = "OverrideNPC";
+            overrideMod.WriteToBinary(Path.Combine(dataFolder, "Override.esp"));
+
+            var winnerMod = new Fallout4Mod(ModKey.FromFileName("Winner.esp"), Fallout4Release.Fallout4);
+            var winnerNpc = winnerMod.Npcs.GetOrAddAsOverride(baseMod.Npcs.First());
+            winnerNpc.EditorID = "WinnerNPC";
+            winnerMod.WriteToBinary(Path.Combine(dataFolder, "Winner.esp"));
+
+            File.WriteAllText(Path.Combine(dataFolder, "Plugins.txt"), "*Base.esp\n*Override.esp\n*Winner.esp\n");
+
+            var reflector = new SchemaReflector();
+            var factory = new DuckDbRecordRepositoryFactory(reflector, new TableDdlBuilder(reflector));
+            using var manager = new SessionManager(factory, new PluginWriter(reflector, NullLogger<PluginWriter>.Instance));
+            manager.Load(dataFolder, Path.Combine(dataFolder, "Plugins.txt"), GameRelease.Fallout4);
+            var changes = MakePendingChangeService();
+            changes.Upsert(baseNpcKey.ToString(), "Override.esp", "npc_",
+                new Dictionary<string, System.Text.Json.JsonElement> { ["aggression"] = System.Text.Json.JsonDocument.Parse("\"Frenzied\"").RootElement },
+                "user", null, new Dictionary<string, System.Text.Json.JsonElement>());
+            var svc = new RecordQueryService(manager, changes, reflector, new ConflictClassifier());
+
+            var result = svc.GetPluginRecordTypes("Override.esp");
+
+            var npc = Assert.Single(result, r => r.Type == "npc_");
+            Assert.Equal(1, npc.Count);
+        }
+        finally
+        {
+            Directory.Delete(dataFolder, recursive: true);
+        }
+    }
+
+    // --- GetRecords — staged records ---
+
+    [Fact]
+    public void GetRecords_ByPlugin_IncludesStagedOnlyRecords()
+    {
+        FormKey npcKey = default;
+        var data = new PluginFixtureBuilder("rqs-staged-records")
+            .WithPlugin("Source.esp", mod => npcKey = mod.Npcs.AddNew("TestNPC").FormKey)
+            .WithPlugin("Override.esp")
+            .Build();
+        using (data)
+        {
+            var reflector = new SchemaReflector();
+            var factory = new DuckDbRecordRepositoryFactory(reflector, new TableDdlBuilder(reflector));
+            using var manager = new SessionManager(factory, new PluginWriter(reflector, NullLogger<PluginWriter>.Instance));
+            manager.Load(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+            var changes = MakePendingChangeService();
+            changes.Upsert(npcKey.ToString(), "Override.esp", "npc_",
+                new Dictionary<string, System.Text.Json.JsonElement> { ["aggression"] = System.Text.Json.JsonDocument.Parse("\"Frenzied\"").RootElement },
+                "user", null, new Dictionary<string, System.Text.Json.JsonElement>());
+            var svc = new RecordQueryService(manager, changes, reflector, new ConflictClassifier());
+
+            var result = svc.GetRecords(type: "npc_", plugin: "Override.esp", search: null, limit: 100, offset: 0);
+
+            Assert.Equal(1, result.Total);
+            Assert.Single(result.Items);
+            Assert.Equal(npcKey.ToString(), result.Items[0].FormKey);
+            Assert.Equal("Override.esp", result.Items[0].Plugin);
+            Assert.False(result.Items[0].IsWinner);
+            Assert.Equal(1, result.Items[0].LoadOrderIndex); // Override.esp is second plugin (index 1)
+        }
+    }
+
+    [Fact]
+    public void GetRecords_ByPlugin_NonZeroOffset_DoesNotAppendStagedRecords()
+    {
+        FormKey npcKey = default;
+        var data = new PluginFixtureBuilder("rqs-staged-paging")
+            .WithPlugin("Source.esp", mod => npcKey = mod.Npcs.AddNew("TestNPC").FormKey)
+            .WithPlugin("Override.esp")
+            .Build();
+        using (data)
+        {
+            var reflector = new SchemaReflector();
+            var factory = new DuckDbRecordRepositoryFactory(reflector, new TableDdlBuilder(reflector));
+            using var manager = new SessionManager(factory, new PluginWriter(reflector, NullLogger<PluginWriter>.Instance));
+            manager.Load(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+            var changes = MakePendingChangeService();
+            changes.Upsert(npcKey.ToString(), "Override.esp", "npc_",
+                new Dictionary<string, System.Text.Json.JsonElement> { ["aggression"] = System.Text.Json.JsonDocument.Parse("\"Frenzied\"").RootElement },
+                "user", null, new Dictionary<string, System.Text.Json.JsonElement>());
+            var svc = new RecordQueryService(manager, changes, reflector, new ConflictClassifier());
+
+            var result = svc.GetRecords(type: "npc_", plugin: "Override.esp", search: null, limit: 100, offset: 1);
+
+            Assert.Empty(result.Items);
+        }
+    }
+
+    [Fact]
+    public void GetRecords_ByPlugin_StagedAlreadyCommittedRecordIsNotDuplicated()
+    {
+        // Pick an already-committed record from the loaded fixture, stage a pending change on it,
+        // and verify it appears exactly once (no duplication between committed + staged sources).
+        var committed = _svc.GetRecords(type: "npc_", plugin: TestPluginFixture.PluginName, search: "TestNPC01", limit: 1, offset: 0);
+        var fk = committed.Items[0].FormKey;
+
+        var changes = MakePendingChangeService();
+        changes.Upsert(fk, TestPluginFixture.PluginName, "npc_",
+            new Dictionary<string, System.Text.Json.JsonElement> { ["aggression"] = System.Text.Json.JsonDocument.Parse("\"Frenzied\"").RootElement },
+            "user", null, new Dictionary<string, System.Text.Json.JsonElement>());
+        var svc = new RecordQueryService(_manager, changes, new SchemaReflector(), new ConflictClassifier());
+
+        var result = svc.GetRecords(type: "npc_", plugin: TestPluginFixture.PluginName, search: null, limit: 100, offset: 0);
+
+        Assert.Equal(TestPluginFixture.RecordCount, result.Total);
+        Assert.Equal(TestPluginFixture.RecordCount, result.Items.Count);
     }
 
     private sealed class SpyRecordReader(IRecordReader inner) : IRecordReader

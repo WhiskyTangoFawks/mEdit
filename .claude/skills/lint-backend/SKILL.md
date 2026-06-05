@@ -51,7 +51,7 @@ Output format: `file(line,col): warning|error RULE_ID: description [project]`
 ## Fixing a diagnostic
 
 1. Open file at indicated line; apply the fix — message is usually self-explanatory.
-2. To suppress a Roslynator rule project-wide: add to `<NoWarn>` in `.csproj`, not `#pragma` in source.
+2. Suppressions ALWAYS require explicit developer approval. To suppress a Roslynator rule project-wide: add to `<NoWarn>` in `.csproj`, not `#pragma` in source.
 3. Re-run to confirm gone.
 
 ## What clean looks like

@@ -21,7 +21,8 @@
       "Log*"
     ],
     "since": {
-      "enabled": false
+      "enabled": true,
+      "target": "main"
     }
   }
 }

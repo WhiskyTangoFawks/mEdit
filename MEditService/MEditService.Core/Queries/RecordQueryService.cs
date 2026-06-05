@@ -38,14 +38,39 @@ public sealed class RecordQueryService : IRecordQueryService
         var repository = RequireRepository();
         var schemas = RequireSchemas();
 
+        PagedResult<RecordSummary> committed;
         if (type != null)
         {
             if (!schemas.ContainsKey(type))
                 return new PagedResult<RecordSummary>([], 0);
-            return repository.GetRecords(type, plugin, search, limit, offset);
+            committed = repository.GetRecords(type, plugin, search, limit, offset);
+        }
+        else
+        {
+            committed = repository.SearchRecords(schemas.Keys.ToList(), plugin, search, limit, offset);
         }
 
-        return repository.SearchRecords(schemas.Keys.ToList(), plugin, search, limit, offset);
+        if (plugin == null || offset > 0)
+            return committed;
+
+        var committedKeys = committed.Items.Select(r => r.FormKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var staged = _changes.GetStagedFormKeys(plugin, type)
+            .Where(s => !committedKeys.Contains(s.FormKey))
+            .ToList();
+
+        if (staged.Count == 0)
+            return committed;
+
+        var loadOrderIndex = RequireSession().Plugins
+            .FirstOrDefault(p => p.Name.Equals(plugin, StringComparison.OrdinalIgnoreCase))?.LoadOrderIndex ?? -1;
+
+        var stagedSummaries = staged
+            .Select(s => new RecordSummary(s.FormKey, plugin, loadOrderIndex, IsWinner: false, EditorId: null))
+            .ToList();
+
+        return new PagedResult<RecordSummary>(
+            [.. committed.Items, .. stagedSummaries],
+            committed.Total + staged.Count);
     }
 
     public RecordDetail? GetRecord(string formKey)
@@ -96,13 +121,24 @@ public sealed class RecordQueryService : IRecordQueryService
     public IReadOnlyList<PluginRecordTypeCount> GetPluginRecordTypes(string plugin)
     {
         var repository = RequireRepository();
-        var result = new List<PluginRecordTypeCount>();
-        foreach (var tableName in RequireSchemas().Keys)
+        var counts = RequireSchemas().Keys
+            .Select(t => (Type: t, Count: repository.CountRecordsForPlugin(t, plugin)))
+            .Where(x => x.Count > 0)
+            .ToDictionary(x => x.Type, x => x.Count, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var recordType in _changes.GetStagedFormKeys(plugin)
+            .Where(s => !counts.ContainsKey(s.RecordType)
+                || repository.GetRecord(s.RecordType, s.FormKey, plugin, winnerOnly: false) == null)
+            .Select(s => s.RecordType))
         {
-            var count = repository.CountRecordsForPlugin(tableName, plugin);
-            if (count > 0) result.Add(new PluginRecordTypeCount(tableName, count));
+            counts.TryGetValue(recordType, out var existing);
+            counts[recordType] = existing + 1;
         }
-        return result.OrderBy(r => r.Type).ToList();
+
+        return counts
+            .Select(kv => new PluginRecordTypeCount(kv.Key, kv.Value))
+            .OrderBy(r => r.Type)
+            .ToList();
     }
 
     private IGameSession RequireSession() =>

@@ -22,4 +22,6 @@ public interface IPendingChangeService
     int Revert(string? plugin, string? formKey);
 
     IReadOnlyList<PendingChange> DrainForPlugin(string plugin);
+
+    IReadOnlyList<(string FormKey, string RecordType)> GetStagedFormKeys(string plugin, string? recordType = null);
 }

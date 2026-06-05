@@ -16,9 +16,10 @@ PARSE="python3 $SCRIPT_DIR/parse-report.py"
 # --- arg parsing ---
 MUTANT_IDS=()
 FILE_FILTER=""
+ALL=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --all) shift ;;  # no-op: since is already disabled in committed config
+        --all) ALL=true; shift ;;
         --file) shift; FILE_FILTER="$1"; shift ;;
         --mutant-ids)
             shift
@@ -52,10 +53,21 @@ with open('$CONFIG', 'w') as f:
     json.dump(cfg, f, indent=2)
     f.write('\n')
 "
-elif [[ -n "$FILE_FILTER" ]]; then
-    echo "Scope: $FILE_FILTER"
-else
+elif [[ "$ALL" == "true" ]]; then
     echo "Scope: all of MEditService.Core (since disabled)"
+    ORIGINAL_CONFIG=$(cat "$CONFIG")
+    python3 -c "
+import json
+cfg = json.load(open('$CONFIG'))
+cfg['stryker-config']['since']['enabled'] = False
+with open('$CONFIG', 'w') as f:
+    json.dump(cfg, f, indent=2)
+    f.write('\n')
+"
+elif [[ -n "$FILE_FILTER" ]]; then
+    echo "Scope: $FILE_FILTER (since: changes vs main)"
+else
+    echo "Scope: files changed vs main (use --all for full corpus)"
 fi
 
 # --- build stryker args ---

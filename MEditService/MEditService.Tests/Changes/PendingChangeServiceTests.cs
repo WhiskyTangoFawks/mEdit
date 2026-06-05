@@ -206,4 +206,63 @@ public sealed class PendingChangeServiceTests : IDisposable
         var ex = Assert.Throws<InvalidOperationException>(() => svc.GetChanges());
         Assert.Equal("No session loaded.", ex.Message);
     }
+
+    // --- GetStagedFormKeys ---
+
+    [Fact]
+    public void GetStagedFormKeys_ReturnsDistinctFormKeysWithRecordType()
+    {
+        var fields = new Dictionary<string, JsonElement> { ["name"] = J("\"X\""), ["level"] = J("1") };
+        _svc.Upsert("FK1", "Override.esp", "npc_", fields, "user", null, new());
+        _svc.Upsert("FK2", "Override.esp", "weap", new() { ["damage"] = J("10") }, "user", null, new());
+
+        var result = _svc.GetStagedFormKeys("Override.esp");
+
+        Assert.Equal(2, result.Count);
+        Assert.Contains(result, r => r.FormKey == "FK1" && r.RecordType == "npc_");
+        Assert.Contains(result, r => r.FormKey == "FK2" && r.RecordType == "weap");
+    }
+
+    [Fact]
+    public void GetStagedFormKeys_DeduplicatesMultipleFieldsForSameRecord()
+    {
+        var fields = new Dictionary<string, JsonElement> { ["name"] = J("\"X\""), ["level"] = J("1") };
+        _svc.Upsert("FK1", "Override.esp", "npc_", fields, "user", null, new());
+
+        var result = _svc.GetStagedFormKeys("Override.esp");
+
+        Assert.Single(result);
+        Assert.Equal("FK1", result[0].FormKey);
+    }
+
+    [Fact]
+    public void GetStagedFormKeys_FiltersByRecordType()
+    {
+        _svc.Upsert("FK1", "Override.esp", "npc_", new() { ["name"] = J("\"X\"") }, "user", null, new());
+        _svc.Upsert("FK2", "Override.esp", "weap", new() { ["damage"] = J("10") }, "user", null, new());
+
+        var result = _svc.GetStagedFormKeys("Override.esp", recordType: "npc_");
+
+        Assert.Single(result);
+        Assert.Equal("FK1", result[0].FormKey);
+    }
+
+    [Fact]
+    public void GetStagedFormKeys_ExcludesOtherPlugins()
+    {
+        _svc.Upsert("FK1", "A.esp", "npc_", new() { ["name"] = J("\"X\"") }, "user", null, new());
+        _svc.Upsert("FK2", "B.esp", "npc_", new() { ["name"] = J("\"Y\"") }, "user", null, new());
+
+        var result = _svc.GetStagedFormKeys("A.esp");
+
+        Assert.Single(result);
+        Assert.Equal("FK1", result[0].FormKey);
+    }
+
+    [Fact]
+    public void GetStagedFormKeys_NoChanges_ReturnsEmpty()
+    {
+        var result = _svc.GetStagedFormKeys("Override.esp");
+        Assert.Empty(result);
+    }
 }

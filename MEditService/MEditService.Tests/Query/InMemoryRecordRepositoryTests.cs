@@ -382,4 +382,32 @@ public class InMemoryRecordRepositoryTests : IClassFixture<TestPluginFixture>
 
         data.Dispose();
     }
+
+    [Fact]
+    public void SearchRecords_MultipleTableTypes_ResultsSortedByEditorIdAscending()
+    {
+        var data = new PluginFixtureBuilder("inmem-search-multitable").Build();
+        var modPath = Path.Combine(data.DataFolder, "Multi.esm");
+
+        var mod = new Fallout4Mod(ModKey.FromFileName("Multi.esm"), Fallout4Release.Fallout4);
+        mod.Npcs.AddNew("Zeta");
+        mod.Weapons.AddNew("Alpha");
+        mod.WriteToBinary(modPath);
+
+        var modLoaded = Fallout4Mod.CreateFromBinaryOverlay(
+            new ModPath(ModKey.FromFileName("Multi.esm"), modPath), Fallout4Release.Fallout4);
+
+        using var repo = new InMemoryRecordRepository(_reflector);
+        repo.Initialize(GameRelease.Fallout4);
+        repo.Index(modLoaded, 0);
+        repo.UpdateWinners();
+
+        var result = repo.SearchRecords(["npc_", "weap"], null, null, 100, 0);
+
+        Assert.Equal(2, result.Total);
+        Assert.Equal("Alpha", result.Items[0].EditorId);
+        Assert.Equal("Zeta", result.Items[1].EditorId);
+
+        data.Dispose();
+    }
 }

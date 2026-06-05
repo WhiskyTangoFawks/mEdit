@@ -182,6 +182,24 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
         }
     }
 
+    public IReadOnlyList<(string FormKey, string RecordType)> GetStagedFormKeys(string plugin, string? recordType = null)
+    {
+        lock (_lock)
+        {
+            var conn = RequireConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT DISTINCT form_key, record_type FROM pending_changes WHERE plugin = $1 AND ($2 IS NULL OR record_type = $2)";
+            cmd.Parameters.Add(new DuckDBParameter { Value = plugin });
+            cmd.Parameters.Add(new DuckDBParameter { Value = (object?)recordType ?? DBNull.Value });
+
+            var result = new List<(string, string)>();
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+                result.Add((reader.GetString(0), reader.GetString(1)));
+            return result;
+        }
+    }
+
     public bool Revert(Guid changeId)
     {
         lock (_lock)

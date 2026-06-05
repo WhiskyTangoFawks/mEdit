@@ -1,32 +1,82 @@
 # Validate
 
-After any task. Stop at first failure and fix before continuing.
+Creates `validation-plan.md` to hand off to a fresh session. Run at end of any implementation task.
 
-## Scope
+## Step 1 — Determine scope
 
 ```bash
 git diff --name-only HEAD && git diff --name-only --cached
 ```
 
-Backend = `MEditService/**/*.cs` | Frontend = `medit-vscode/**/*.ts|tsx`, `package.json` | API = `src/generated/api.ts`
+Classify each changed file:
 
-## Gates
+- **Backend**: `MEditService/**/*.cs`
+- **Frontend**: `medit-vscode/**/*.ts`, `medit-vscode/**/*.tsx`, `package.json`, `src/generated/api.ts`
+- **Core CS** (mutation eligible): `MEditService/MEditService.Core/**/*.cs`
+- **Config/docs only**: nothing in Backend or Frontend buckets
 
-| Gate | Run when | How |
-|------|----------|-----|
-| 1 — Simplify | Always | `/simplify` |
-| 2 — Backend lint | Backend | `/lint-backend` |
-| 3 — Backend tests | Backend | `cd MEditService && dotnet test -v minimal` |
-| 4 — Frontend lint | Frontend | `cd medit-vscode && npm run lint` |
-| 5 — Frontend tests | Frontend or api.ts | `cd medit-vscode && npm run test:unit && npm run test:integration` |
-| 6 — Mutation tests | Core `*.cs`, after Gate 3 | `cd MEditService && bash ../.claude/skills/mutation-test/run.sh` |
-| 7 — Code review | Always | `/code-review` |
+## Step 2 — Determine run-gates command
 
-Config/docs only → skip gates 2–6.
-Gate 6 survivors → triage per `/mutation-test`.
-Can't pass a gate → document why; don't skip silently.
+From scope, build the exact command:
 
-## Static analysis notes
+| Scope | Flags |
+|-------|-------|
+| Backend only | `bash .claude/skills/validate/run-gates.sh --backend` |
+| Frontend only | `bash .claude/skills/validate/run-gates.sh --frontend` |
+| Both | `bash .claude/skills/validate/run-gates.sh --backend --frontend` |
+| Config/docs only | *(omit Step 1 from execution plan)* |
 
-- C# analyzer violations (Roslynator, SonarAnalyzer) surface during `dotnet build` via `EnforceCodeStyleInBuild=true`; Gate 3 catches them.
-- Gate 4 (`npm run lint`) is the exhaustive ESLint check; the VS Code ESLint extension only runs on open files.
+## Step 3 — Identify task files
+
+Include any task `.md` files explicitly in use during this session (known from conversation context — do not scan). If none, write "none".
+
+## Step 4 — Write `validation-plan.md`
+
+Write to the project root:
+
+```markdown
+# Validation Plan
+
+## Work Summary
+<1–3 sentences describing what was implemented or changed>
+
+## Files Changed
+<file list from git diff>
+
+## Scope
+- Backend: yes/no
+- Frontend: yes/no
+- Core CS (mutation eligible): yes/no
+- Config/docs only: yes/no
+
+## Task Files
+<list of paths and what to mark complete, or "none">
+
+## Execution
+
+### Step 1 — Mechanical gates
+<exact command from Step 2 above>
+
+All scope failures reported together — fix all, then rerun. With TDD, expect pass on first run.
+
+### Step 2 — Simplify (LLM)
+/simplify
+
+If simplify changes logic (not just style), rerun Step 1.
+
+### Step 3 — Code review (LLM)
+/code-review
+
+### Step 4 — Mutation tests (only if Core CS changed)
+cd MEditService && bash ../.claude/skills/mutation-test/run.sh
+Triage survivors per /mutation-test.
+
+## Completion
+When all steps pass:
+1. Update task files listed above
+2. `rm validation-plan.md`
+```
+
+## Step 5 — Hand off
+
+Tell the user `validation-plan.md` is ready. Starting a new session to execute it is the implicit approval.

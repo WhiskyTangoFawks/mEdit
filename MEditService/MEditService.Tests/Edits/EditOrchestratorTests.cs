@@ -167,6 +167,28 @@ public sealed class EditOrchestratorTests
     }
 
     [Fact]
+    public void StageEdit_PluginNotInSession_DoesNotThrow()
+    {
+        FormKey npcKey = default;
+        var data = new PluginFixtureBuilder("eo-unknown-plugin")
+            .WithPlugin("Source.esp", mod => npcKey = mod.Npcs.AddNew("TestNPC").FormKey)
+            .Build();
+        using (data)
+        {
+            var (orchestrator, manager) = MakeOrchestrator();
+            using (manager)
+            {
+                manager.Load(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+                var fields = new Dictionary<string, JsonElement> { ["aggression"] = J("\"Frenzied\"") };
+
+                var result = orchestrator.StageEdit(npcKey.ToString(), "NotLoaded.esp", fields, "user", null);
+
+                Assert.IsType<StageEditResult.Staged>(result);
+            }
+        }
+    }
+
+    [Fact]
     public void StageEdit_NoSession_ReturnsNoSession()
     {
         var (orchestrator, manager) = MakeOrchestrator();
