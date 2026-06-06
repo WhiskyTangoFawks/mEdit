@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Manual Test",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}/medit-vscode"],
+      "outFiles": ["${workspaceFolder}/medit-vscode/out/**/*.js"],
+      "preLaunchTask": "Manual Test: Pre-launch"
+    }
+  ]
+}
