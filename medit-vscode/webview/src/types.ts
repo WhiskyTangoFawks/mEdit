@@ -36,6 +36,7 @@ export interface FieldDiff {
   values: Record<string, unknown>;
   winnerPlugin: string;
   winnerValue: unknown;
+  cellStates: Record<string, ConflictThis>;
 }
 
 export interface CompareResult {

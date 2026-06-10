@@ -181,6 +181,7 @@ const compareResult = {
       values: { 'Fallout4.esm': 'Original Name', 'MyMod.esp': 'Override Name' },
       winnerPlugin: 'MyMod.esp',
       winnerValue: 'Override Name',
+      cellStates: { 'MyMod.esp': 'ConflictWins' },
     },
   ],
 };
@@ -284,6 +285,7 @@ const fkCompareResult = {
       values: { 'Fallout4.esm': '00013918:Fallout4.esm' },
       winnerPlugin: 'Fallout4.esm',
       winnerValue: '00013918:Fallout4.esm',
+      cellStates: {},
     },
   ],
 };
@@ -300,8 +302,48 @@ const overrideCompareResult = {
       pendingFields: {}, conflictThis: 'Override' },
   ],
   diffs: [{ fieldName: 'Name', values: { 'Fallout4.esm': 'Original Name', 'MyMod.esp': 'Override Name' },
-    winnerPlugin: 'MyMod.esp', winnerValue: 'Override Name' }],
+    winnerPlugin: 'MyMod.esp', winnerValue: 'Override Name', cellStates: { 'MyMod.esp': 'Override' } }],
 };
+
+// Three-plugin conflict fixture for per-cell ConflictLoses/ConflictWins tests
+const threePluginConflictResult = {
+  conflictAll: 'Conflict',
+  overrides: [
+    { formKey: '000001:Fallout4.esm', plugin: 'Fallout4.esm', loadOrderIndex: 0, isWinner: false,
+      editorId: 'TestNPC', fields: [{ metadata: strMeta, value: 'Alice' }],
+      pendingFields: {}, conflictThis: 'Master' },
+    { formKey: '000001:Fallout4.esm', plugin: 'Mod1.esp', loadOrderIndex: 1, isWinner: false,
+      editorId: 'TestNPC', fields: [{ metadata: strMeta, value: 'Bob' }],
+      pendingFields: {}, conflictThis: 'ConflictLoses' },
+    { formKey: '000001:Fallout4.esm', plugin: 'Mod2.esp', loadOrderIndex: 2, isWinner: true,
+      editorId: 'TestNPC', fields: [{ metadata: strMeta, value: 'Charlie' }],
+      pendingFields: {}, conflictThis: 'ConflictWins' },
+  ],
+  diffs: [{
+    fieldName: 'Name',
+    values: { 'Fallout4.esm': 'Alice', 'Mod1.esp': 'Bob', 'Mod2.esp': 'Charlie' },
+    winnerPlugin: 'Mod2.esp',
+    winnerValue: 'Charlie',
+    cellStates: { 'Mod1.esp': 'ConflictLoses', 'Mod2.esp': 'ConflictWins' },
+  }],
+};
+
+describe('RecordPanel — OnlyOne record display', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('renders field rows for a single-override (OnlyOne) record', async () => {
+    vi.stubGlobal('mEditFormKey', '000001:Fallout4.esm');
+    vi.stubGlobal('mEditBackendPort', 15172);
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (String(url).includes('/compare')) return { ok: true, json: () => Promise.resolve(fkCompareResult) };
+      if (String(url).includes('/changes'))  return { ok: true, json: () => Promise.resolve([]) };
+      if (String(url).includes('/plugins'))  return { ok: true, json: () => Promise.resolve([{ name: 'Fallout4.esm', isImmutable: true, loadOrderIndex: 0 }]) };
+      return { ok: false, status: 404, statusText: 'Not Found' };
+    }));
+    render(<RecordPanel />);
+    await waitFor(() => expect(screen.getByText('Race')).toBeInTheDocument());
+  });
+});
 
 describe('RecordPanel — conflict color coding', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -331,14 +373,60 @@ describe('RecordPanel — conflict color coding', () => {
     expect(row.style.backgroundColor).toBe('rgba(255, 152, 0, 0.20)');
   });
 
-  it('applies orange cell background when conflictThis is ConflictWins', async () => {
+  it('applies orange cell background when cellStates is ConflictWins', async () => {
     vi.stubGlobal('mEditFormKey', '000001:Fallout4.esm');
     vi.stubGlobal('mEditBackendPort', 15172);
     vi.stubGlobal('fetch', makeFetch());
     render(<RecordPanel />);
     await waitFor(() => screen.getByText('Override Name'));
     const cell = screen.getByText('Override Name').closest('td')!;
-    expect(cell.style.backgroundColor).toBe('rgba(255, 152, 0, 0.35)');
+    expect(cell.style.backgroundColor).toBe('rgba(255, 152, 0, 0.18)');
+  });
+
+  it('applies red cell background and red text when cellStates is ConflictLoses', async () => {
+    vi.stubGlobal('mEditFormKey', '000001:Fallout4.esm');
+    vi.stubGlobal('mEditBackendPort', 15172);
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (String(url).includes('/compare')) return { ok: true, json: () => Promise.resolve(threePluginConflictResult) };
+      if (String(url).includes('/changes'))  return { ok: true, json: () => Promise.resolve([]) };
+      if (String(url).includes('/plugins'))  return { ok: true, json: () => Promise.resolve([
+        { name: 'Fallout4.esm', isImmutable: true, loadOrderIndex: 0 },
+        { name: 'Mod1.esp', isImmutable: false, loadOrderIndex: 1 },
+        { name: 'Mod2.esp', isImmutable: false, loadOrderIndex: 2 },
+      ]) };
+      return { ok: false, status: 404, statusText: 'Not Found' };
+    }));
+    render(<RecordPanel />);
+    await waitFor(() => screen.getByText('Bob'));
+    const cell = screen.getByText('Bob').closest('td')!;
+    expect(cell.style.backgroundColor).toBe('rgba(244, 67, 54, 0.18)');
+    expect(cell.style.color).toBe('rgba(244, 67, 54, 1)');
+  });
+
+  it('applies green cell background when cellStates is Override', async () => {
+    vi.stubGlobal('mEditFormKey', '000001:Fallout4.esm');
+    vi.stubGlobal('mEditBackendPort', 15172);
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (String(url).includes('/compare')) return { ok: true, json: () => Promise.resolve(overrideCompareResult) };
+      if (String(url).includes('/changes'))  return { ok: true, json: () => Promise.resolve([]) };
+      if (String(url).includes('/plugins'))  return { ok: true, json: () => Promise.resolve(pluginsResponse) };
+      return { ok: false, status: 404, statusText: 'Not Found' };
+    }));
+    render(<RecordPanel />);
+    await waitFor(() => screen.getByText('Override Name'));
+    const cell = screen.getByText('Override Name').closest('td')!;
+    expect(cell.style.backgroundColor).toBe('rgba(76, 175, 80, 0.18)');
+  });
+
+  it('column header background reflects CompareOverride.conflictThis', async () => {
+    vi.stubGlobal('mEditFormKey', '000001:Fallout4.esm');
+    vi.stubGlobal('mEditBackendPort', 15172);
+    vi.stubGlobal('fetch', makeFetch());
+    render(<RecordPanel />);
+    await waitFor(() => screen.getByText('Override Name'));
+    // MyMod.esp header: conflictThis = 'ConflictWins' → orange background in the <th>
+    const header = screen.getByText('MyMod.esp').closest('th')!;
+    expect(header.style.backgroundColor).toBe('rgba(255, 152, 0, 0.35)');
   });
 });
 

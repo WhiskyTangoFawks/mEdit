@@ -6,7 +6,7 @@ A full MO2 replacement built into the VS Code extension, unified with the existi
 
 ## Vision
 
-One tool handles the entire modding workflow: install → sort → launch → inspect conflicts → edit records → patch. The sidebar switches between **Mod List** (install/sort/enable) and **Plugin List** (load order/edit) depending on context. A deploy/purge step via VS Code run configuration writes the merged mod view into the game's `Data/` folder using hardlinks.
+One tool handles the entire modding workflow: install → manual sort → launch → inspect conflicts → edit records → patch. The sidebar switches between **Mod List** (install/sort/enable) and **Plugin List** (load order/edit) depending on context. A deploy/purge step via VS Code run configuration writes the merged mod view into the game's `Data/` folder using hardlinks.
 
 ---
 

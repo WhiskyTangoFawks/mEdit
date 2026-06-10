@@ -379,4 +379,80 @@ public class ConflictClassifierTests
         var result = Classify([master, override1]);
         Assert.Equal(ConflictAll.Override, result.ConflictAll);
     }
+
+    // --- CellStates per-field ---
+
+    [Fact]
+    public void Classify_TwoPlugins_NonMasterMatchesMaster_CellStateIsIdenticalToMaster()
+    {
+        var master = MakeOverride("A.esp", 0, false, ("name", "Alice"));
+        var override1 = MakeOverride("B.esp", 1, true, ("name", "Alice"));
+        var result = Classify([master, override1]);
+        var nameDiff = result.Diffs.First(d => d.FieldName == "name");
+        Assert.Equal(ConflictThis.IdenticalToMaster, nameDiff.CellStates["B.esp"]);
+        Assert.False(nameDiff.CellStates.ContainsKey("A.esp")); // master omitted
+    }
+
+    [Fact]
+    public void Classify_TwoPlugins_NonMasterChangesFieldUncontestedly_CellStateIsOverride()
+    {
+        var master = MakeOverride("A.esp", 0, false, ("name", "Alice"));
+        var override1 = MakeOverride("B.esp", 1, true, ("name", "Bob"));
+        var result = Classify([master, override1]);
+        var nameDiff = result.Diffs.First(d => d.FieldName == "name");
+        Assert.Equal(ConflictThis.Override, nameDiff.CellStates["B.esp"]);
+        Assert.False(nameDiff.CellStates.ContainsKey("A.esp")); // master omitted
+    }
+
+    [Fact]
+    public void Classify_ThreePlugins_TwoDisagreeOnField_WinnerGetsConflictWins_LoserGetsConflictLoses()
+    {
+        var master = MakeOverride("A.esp", 0, false, ("name", "Alice"));
+        var loser = MakeOverride("B.esp", 1, false, ("name", "Bob"));
+        var winner = MakeOverride("C.esp", 2, true, ("name", "Charlie"));
+        var result = Classify([master, loser, winner]);
+        var nameDiff = result.Diffs.First(d => d.FieldName == "name");
+        Assert.Equal(ConflictThis.ConflictWins, nameDiff.CellStates["C.esp"]);
+        Assert.Equal(ConflictThis.ConflictLoses, nameDiff.CellStates["B.esp"]);
+        Assert.False(nameDiff.CellStates.ContainsKey("A.esp")); // master omitted
+    }
+
+    [Fact]
+    public void Classify_FieldWinnerDiffersFromRecordWinner_FieldWinnerGetsOverride()
+    {
+        // Record winner (C.esp) has null for "name"; B.esp (mid-stack) set it → B is field winner for "name".
+        // No other non-master has a different non-null value → B gets Override (not ConflictLoses).
+        var master = MakeOverride("A.esp", 0, false, ("name", "Alice"));
+        var fieldWinner = MakeOverride("B.esp", 1, false, ("name", "Bob"));
+        var recordWinner = MakeOverride("C.esp", 2, true, ("name", null));
+        var result = Classify([master, fieldWinner, recordWinner]);
+        var nameDiff = result.Diffs.First(d => d.FieldName == "name");
+        Assert.Equal(ConflictThis.Override, nameDiff.CellStates["B.esp"]);
+        Assert.False(nameDiff.CellStates.ContainsKey("C.esp")); // null → omitted
+    }
+
+    [Fact]
+    public void Classify_NonWinnerMatchesFieldWinner_CellStateIsOverride()
+    {
+        // B.esp and C.esp both set "name" to "Bob". C.esp (load 2) is field winner.
+        // B.esp is not the field winner; !ValuesEqual("Bob","Bob") = false → Override, not ConflictLoses.
+        var master = MakeOverride("A.esp", 0, false, ("name", "Alice"));
+        var nonWinner = MakeOverride("B.esp", 1, false, ("name", "Bob"));
+        var winner = MakeOverride("C.esp", 2, true, ("name", "Bob"));
+        var result = Classify([master, nonWinner, winner]);
+        var nameDiff = result.Diffs.First(d => d.FieldName == "name");
+        Assert.Equal(ConflictThis.Override, nameDiff.CellStates["B.esp"]);
+    }
+
+    [Fact]
+    public void Classify_NullValueInNonMaster_OmittedFromCellStates()
+    {
+        var master = MakeOverride("A.esp", 0, false, ("name", "Alice"));
+        var partial = MakeOverride("B.esp", 1, false, ("name", null));
+        var winner = MakeOverride("C.esp", 2, true, ("name", "Charlie"));
+        var result = Classify([master, partial, winner]);
+        var nameDiff = result.Diffs.First(d => d.FieldName == "name");
+        Assert.False(nameDiff.CellStates.ContainsKey("B.esp")); // null → omitted
+        Assert.True(nameDiff.CellStates.ContainsKey("C.esp"));
+    }
 }

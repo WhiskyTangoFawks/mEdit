@@ -148,7 +148,7 @@ public sealed class RecordQueryServiceTests : IClassFixture<TestPluginFixture>, 
     // --- GET /records/{formKey}/compare ---
 
     [Fact]
-    public void GetCompare_SingleOverride_NoDiffs()
+    public void GetCompare_SingleOverride_ReturnsDiffs()
     {
         var all = _svc.GetRecords(type: "npc_", plugin: null, search: "TestNPC01", limit: 1, offset: 0);
         var compare = _svc.GetCompare(all.Items[0].FormKey);
@@ -156,6 +156,7 @@ public sealed class RecordQueryServiceTests : IClassFixture<TestPluginFixture>, 
         Assert.NotNull(compare);
         Assert.Single(compare.Overrides);
         Assert.Equal(ConflictAll.OnlyOne, compare.ConflictAll);
+        Assert.NotEmpty(compare.Diffs);
     }
 
     [Fact]

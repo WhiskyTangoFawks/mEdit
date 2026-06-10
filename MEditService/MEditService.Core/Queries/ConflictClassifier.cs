@@ -16,7 +16,7 @@ public sealed class ConflictClassifier : IConflictClassifier
             var single = conflictingRecords[0];
             var pluginState = new Dictionary<string, ConflictThis> { [single.Plugin] = ConflictThis.OnlyOne };
             var fieldNames = single.Fields.Select(f => f.Metadata.Name).ToList();
-            return new ClassifyResult(ConflictAll.OnlyOne, pluginState, BuildDiffs(fieldNames, conflictingRecords, single));
+            return new ClassifyResult(ConflictAll.OnlyOne, pluginState, BuildDiffs(fieldNames, conflictingRecords, single, single.Plugin, []));
         }
 
         var master = conflictingRecords[0];
@@ -29,13 +29,13 @@ public sealed class ConflictClassifier : IConflictClassifier
             .Where(f => f.Metadata.ElementType?.IsSortable == true)
             .Select(f => f.Metadata.Name)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var diffs = BuildDiffs(master.Fields.Select(f => f.Metadata.Name).ToList(), conflictingRecords, winner);
+        var diffs = BuildDiffs(master.Fields.Select(f => f.Metadata.Name).ToList(), conflictingRecords, winner, master.Plugin, sortedArrays);
 
         var conflictAll = ComputeConflictAll(master.Plugin, masterValues, conflictingRecords, diffs, sortedArrays);
 
         var pluginConflictThis = conflictingRecords.ToDictionary(
             o => o.Plugin,
-            o => ComputeConflictThis(o, master.Plugin, masterValues, winner, conflictingRecords, sortedArrays));
+            o => AggregateConflictThis(o.Plugin, master.Plugin, diffs));
 
         if (IsInjectedRecord(conflictingRecords, pluginMasters))
             conflictAll = ConflictAll.ConflictCritical;
@@ -66,48 +66,23 @@ public sealed class ConflictClassifier : IConflictClassifier
         return hasConflict ? ConflictAll.Conflict : ConflictAll.Override;
     }
 
-    private static ConflictThis ComputeConflictThis(
-        RecordDetail plugin,
+    private static ConflictThis AggregateConflictThis(
+        string plugin,
         string masterPlugin,
-        Dictionary<string, object?> masterValues,
-        RecordDetail winner,
-        IReadOnlyList<RecordDetail> all,
-        HashSet<string> sortedArrays)
+        IReadOnlyList<FieldDiff> diffs)
     {
-        if (plugin.Plugin == masterPlugin) return ConflictThis.Master;
+        if (plugin == masterPlugin) return ConflictThis.Master;
 
-        var pluginValues = IndexByName(plugin.Fields);
+        var states = diffs
+            .Where(d => d.CellStates.ContainsKey(plugin))
+            .Select(d => d.CellStates[plugin])
+            .ToList();
 
-        var changedFields = pluginValues
-            .Where(kv =>
-                kv.Value != null &&
-                !ValuesEqual(kv.Value, masterValues.GetValueOrDefault(kv.Key), sortedArrays.Contains(kv.Key)))
-            .Select(kv => kv.Key)
-            .ToHashSet();
-
-        if (changedFields.Count == 0) return ConflictThis.IdenticalToMaster;
-
-        if (plugin.IsWinner)
-        {
-            var contested = all
-                .Where(o => o.Plugin != masterPlugin && o.Plugin != plugin.Plugin)
-                .SelectMany(o => o.Fields)
-                .Any(f =>
-                    changedFields.Contains(f.Metadata.Name) &&
-                    f.Value != null &&
-                    !ValuesEqual(f.Value, pluginValues.GetValueOrDefault(f.Metadata.Name), sortedArrays.Contains(f.Metadata.Name)));
-            return contested ? ConflictThis.ConflictWins : ConflictThis.Override;
-        }
-        else
-        {
-            var winnerValues = IndexByName(winner.Fields);
-            var lost = changedFields.Any(field =>
-            {
-                var winnerVal = winnerValues.GetValueOrDefault(field);
-                return winnerVal != null && !ValuesEqual(winnerVal, pluginValues.GetValueOrDefault(field), sortedArrays.Contains(field));
-            });
-            return lost ? ConflictThis.ConflictLoses : ConflictThis.Override;
-        }
+        if (states.Count == 0) return ConflictThis.IdenticalToMaster;
+        if (states.Contains(ConflictThis.ConflictLoses)) return ConflictThis.ConflictLoses;
+        if (states.Contains(ConflictThis.ConflictWins)) return ConflictThis.ConflictWins;
+        if (states.Contains(ConflictThis.Override)) return ConflictThis.Override;
+        return ConflictThis.IdenticalToMaster;
     }
 
     private static bool IsInjectedRecord(
@@ -125,7 +100,9 @@ public sealed class ConflictClassifier : IConflictClassifier
     private static List<FieldDiff> BuildDiffs(
         IReadOnlyList<string> fieldNames,
         IReadOnlyList<RecordDetail> records,
-        RecordDetail winner) =>
+        RecordDetail winner,
+        string masterPlugin,
+        HashSet<string> sortedArrays) =>
         fieldNames
             .Select(fieldName =>
             {
@@ -133,10 +110,66 @@ public sealed class ConflictClassifier : IConflictClassifier
                     o => o.Plugin,
                     o => o.Fields.FirstOrDefault(f => f.Metadata.Name == fieldName)?.Value);
                 var winnerValue = values.GetValueOrDefault(winner.Plugin);
-                return new FieldDiff(fieldName, values, winner.Plugin, winnerValue);
+                var cellStates = ComputeCellStates(fieldName, values, masterPlugin, records, sortedArrays);
+                return new FieldDiff(fieldName, values, winner.Plugin, winnerValue, cellStates);
             })
             .Where(d => d.Values.Values.Any(v => v != null))
             .ToList();
+
+    private static Dictionary<string, ConflictThis> ComputeCellStates(
+        string fieldName,
+        Dictionary<string, object?> values,
+        string masterPlugin,
+        IReadOnlyList<RecordDetail> records,
+        HashSet<string> sortedArrays)
+    {
+        var isSorted = sortedArrays.Contains(fieldName);
+        var masterValue = values.GetValueOrDefault(masterPlugin);
+
+        // Field winner: highest load-order plugin with a non-null value for this field.
+        var fieldWinner = records
+            .Where(r => values.GetValueOrDefault(r.Plugin) != null)
+            .MaxBy(r => r.LoadOrderIndex);
+
+        if (fieldWinner == null) return [];
+
+        var cellStates = new Dictionary<string, ConflictThis>();
+
+        foreach (var plugin in records.Select(r => r.Plugin))
+        {
+            if (plugin == masterPlugin) continue;
+
+            var pluginValue = values.GetValueOrDefault(plugin);
+            if (pluginValue == null) continue;
+
+            if (ValuesEqual(pluginValue, masterValue, isSorted))
+            {
+                cellStates[plugin] = ConflictThis.IdenticalToMaster;
+                continue;
+            }
+
+            if (plugin == fieldWinner.Plugin)
+            {
+                var contested = records
+                    .Where(r => r.Plugin != masterPlugin && r.Plugin != plugin)
+                    .Any(r =>
+                    {
+                        var v = values.GetValueOrDefault(r.Plugin);
+                        return v != null && !ValuesEqual(v, pluginValue, isSorted);
+                    });
+                cellStates[plugin] = contested ? ConflictThis.ConflictWins : ConflictThis.Override;
+            }
+            else
+            {
+                var fieldWinnerValue = values[fieldWinner.Plugin];
+                cellStates[plugin] = !ValuesEqual(pluginValue, fieldWinnerValue, isSorted)
+                    ? ConflictThis.ConflictLoses
+                    : ConflictThis.Override;
+            }
+        }
+
+        return cellStates;
+    }
 
     private static Dictionary<string, object?> IndexByName(IReadOnlyList<FieldValue> fields) =>
         fields.ToDictionary(f => f.Metadata.Name, f => f.Value);

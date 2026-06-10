@@ -264,6 +264,9 @@ export interface components {
             } | null;
             winnerPlugin?: string | null;
             winnerValue?: unknown;
+            cellStates?: {
+                [key: string]: components["schemas"]["ConflictThis"];
+            } | null;
         };
         FieldMetadata: {
             name?: string | null;
@@ -849,6 +852,15 @@ export interface operations {
                     "application/json": components["schemas"]["SessionFilterResponse"];
                 };
             };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
         };
     };
     SetFilter: {
@@ -891,6 +903,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
         };
     };
     ClearFilter: {
@@ -909,8 +930,17 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Bad Request */
-            400: {
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -36,15 +36,27 @@ const ROW_BG: Partial<Record<ConflictAll, string>> = {
   ConflictCritical: 'rgba(244,67,54,0.20)',
 };
 
-const COL_BG: Partial<Record<ConflictThis, string>> = {
-  IdenticalToMaster: 'rgba(150,150,150,0.35)',
-  Override:          'rgba(76,175,80,0.35)',
-  ConflictWins:      'rgba(255,152,0,0.35)',
-  ConflictLoses:     'rgba(244,67,54,0.35)',
+const CONFLICT_RGB: Partial<Record<ConflictThis, string>> = {
+  IdenticalToMaster: '150,150,150',
+  Override:          '76,175,80',
+  ConflictWins:      '255,152,0',
+  ConflictLoses:     '244,67,54',
+};
+
+const getConflictBg = (c: ConflictThis | undefined, alpha: number): string | undefined => {
+  const rgb = c !== undefined ? CONFLICT_RGB[c] : undefined;
+  return rgb ? `rgba(${rgb},${alpha})` : undefined;
 };
 
 const getRowBg = (c: ConflictAll): string | undefined => ROW_BG[c];
-const getColBg = (c: ConflictThis | undefined): string | undefined => c !== undefined ? COL_BG[c] : undefined;
+const getHeaderBg = (c: ConflictThis | undefined): string | undefined => getConflictBg(c, 0.35);
+
+function getCellStyle(cellState: ConflictThis | undefined): React.CSSProperties {
+  const bg = getConflictBg(cellState, 0.18);
+  if (!bg) return {};
+  if (cellState === 'ConflictLoses') return { backgroundColor: bg, color: 'rgba(244,67,54,1)' };
+  return { backgroundColor: bg };
+}
 
 // ── ScalarCell ────────────────────────────────────────────────────────────────
 
@@ -346,9 +358,8 @@ function DiffRow({
       {columns.map(col => {
         if (col.kind === 'disk') {
           const { override: o } = col;
-          const bg = getColBg(o.conflictThis);
           return (
-            <td key={`disk:${o.plugin}`} style={{ ...baseCell, backgroundColor: bg, userSelect: 'text' }}>
+            <td key={`disk:${o.plugin}`} style={{ ...baseCell, ...getCellStyle(diff.cellStates?.[o.plugin]), userSelect: 'text' }}>
               {renderCell(diff.values[o.plugin], meta, editMode, port, onOpen,
                 v => onEdit(o.plugin, diff.fieldName, v))}
             </td>
@@ -612,7 +623,7 @@ export function RecordPanel() {
               {columns.map(col => {
                 if (col.kind === 'disk') {
                   return (
-                    <th key={`disk:${col.override.plugin}`} style={{ ...baseCell, fontWeight: 600, textAlign: 'left', minWidth: '200px', backgroundColor: getColBg(col.override.conflictThis) }}>
+                    <th key={`disk:${col.override.plugin}`} style={{ ...baseCell, fontWeight: 600, textAlign: 'left', minWidth: '200px', backgroundColor: getHeaderBg(col.override.conflictThis) }}>
                       <PluginHeader
                         override={col.override}
                         isImmutable={immutableSet.has(col.override.plugin)}
