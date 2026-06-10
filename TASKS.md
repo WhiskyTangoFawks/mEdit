@@ -27,8 +27,10 @@ Each phase has its own spec file in [docs/tasks/](docs/tasks/). Completed phases
 | **B** | ✓ | Pending change model redesign — ADR-0017, DuckDB-backed storage design, field-level granularity | [phase-B](docs/tasks/phase-B.md) |
 | **B.1** | ✓ POC | Migrate `PendingChangeService` to DuckDB — prerequisite for Phase 9 `hasDelta` filter and Phase 15 scripting | [phase-B1](docs/tasks/phase-B1.md) |
 | **9** | ✓ | Conflict classification — two-axis `ConflictAll`/`ConflictThis` enums, compare grid row/column coloring | [phase-9](docs/tasks/phase-9.md) |
-| **9.5** | Not Started | ConflictPriority refinements — `cpIgnore`/`cpBenign` table from xEdit defs, sorted arrays, injected records | [phase-9.5](docs/tasks/phase-9.5.md) |
-| **9.6** | Not Started | Record filtering — SQL-derived conflict filter, free-text EditorID search, conflict tree node + toolbar | [phase-9.6](docs/tasks/phase-9.6.md) |
+| **9.5** | ✓ | ConflictPriority refinements — sorted array detection, injected record detection; `cpIgnore`/`cpBenign` deferred | [phase-9.5](docs/tasks/phase-9.5.md) |
+| **9.6** | ✓ | Record filtering — SQL-derived conflict filter, free-text EditorID search, conflict tree node + toolbar | [phase-9.6](docs/tasks/phase-9.6.md) |
+| **9.7** | ✓ | Per-cell CellStates conflict coloring — per-plugin `ConflictThis` cell backgrounds in the compare grid | [phase-9.7](docs/tasks/phase-9.7.md) |
+| **9.8** | ✓ | Struct sub-row display — `FieldDiff.Children`, expand/collapse toggle, per-sub-field conflict coloring and editing | [phase-9.8](docs/tasks/phase-9.8.md) |
 | **10** | Not Started | Record lifecycle — create, delete, renumber; `ChangeGroup`; atomic multi-plugin save | [phase-10](docs/tasks/phase-10.md) |
 | **11** | Not Started | Referenced By / record graph — `form_references` DuckDB table, "Referenced By" tab in record panel | [phase-11](docs/tasks/phase-11.md) |
 | **12** | Not Started | Struct/array field types — recursive sub-schema, `<ArrayRowGroup>`, `<StructRowGroup>`, enum/flag cells | [phase-12](docs/tasks/phase-12.md) |

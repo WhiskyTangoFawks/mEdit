@@ -2,7 +2,7 @@
 
 **Status: Complete**
 
-*Design to be finalized in a grill session before implementation.*
+*Implemented Option B — backend `FieldDiff.Children` with server-authoritative `CellStates` per sub-field.*
 
 ## Goal
 
