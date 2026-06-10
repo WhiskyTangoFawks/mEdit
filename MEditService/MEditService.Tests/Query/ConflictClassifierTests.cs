@@ -455,4 +455,207 @@ public class ConflictClassifierTests
         Assert.False(nameDiff.CellStates.ContainsKey("B.esp")); // null → omitted
         Assert.True(nameDiff.CellStates.ContainsKey("C.esp"));
     }
+
+    // --- Struct Children ---
+
+    private static FieldMetadata StructMeta(string name, params FieldMetadata[] subFields) =>
+        new(name, "struct", false, [], [], Fields: subFields.ToList());
+
+    private static RecordDetail MakeStructOverride(
+        string plugin, int loadOrder, bool isWinner,
+        FieldMetadata structMeta, object? structValue) =>
+        new("000001:Test.esp", plugin, loadOrder, isWinner, null,
+            [new FieldValue(structMeta, structValue)]);
+
+    [Fact]
+    public void Classify_NonStructField_ChildrenIsNull()
+    {
+        var master = MakeOverride("A.esp", 0, false, ("name", "Alice"));
+        var override1 = MakeOverride("B.esp", 1, true, ("name", "Bob"));
+        var result = Classify([master, override1]);
+        var nameDiff = result.Diffs.First(d => d.FieldName == "name");
+        Assert.Null(nameDiff.Children);
+    }
+
+    [Fact]
+    public void Classify_StructField_TwoPluginsDifferOnSubField_ChildrenPopulated()
+    {
+        var subX = Meta("X", "int");
+        var subY = Meta("Y", "int");
+        var structMeta = StructMeta("Bounds", subX, subY);
+
+        var masterVal = JsonSerializer.Deserialize<JsonElement>("{\"X\": 10, \"Y\": 20}");
+        var overrideVal = JsonSerializer.Deserialize<JsonElement>("{\"X\": 15, \"Y\": 20}");
+
+        var master = MakeStructOverride("A.esp", 0, false, structMeta, masterVal);
+        var override1 = MakeStructOverride("B.esp", 1, true, structMeta, overrideVal);
+
+        var result = Classify([master, override1]);
+
+        var boundsDiff = result.Diffs.First(d => d.FieldName == "Bounds");
+        Assert.NotNull(boundsDiff.Children);
+
+        var xChild = boundsDiff.Children!.FirstOrDefault(c => c.FieldName == "X");
+        Assert.NotNull(xChild);
+        Assert.True(xChild!.CellStates.ContainsKey("B.esp"));
+        Assert.Equal(ConflictThis.Override, xChild.CellStates["B.esp"]);
+
+        var yChild = boundsDiff.Children!.FirstOrDefault(c => c.FieldName == "Y");
+        Assert.NotNull(yChild);
+        Assert.True(yChild!.CellStates.ContainsKey("B.esp"));
+        Assert.Equal(ConflictThis.IdenticalToMaster, yChild.CellStates["B.esp"]);
+    }
+
+    [Fact]
+    public void Classify_StructField_AllPluginsAgreeOnStruct_ChildrenHaveIdenticalToMasterStates()
+    {
+        var subX = Meta("X", "int");
+        var subY = Meta("Y", "int");
+        var structMeta = StructMeta("Bounds", subX, subY);
+
+        var val = JsonSerializer.Deserialize<JsonElement>("{\"X\": 10, \"Y\": 20}");
+
+        var master = MakeStructOverride("A.esp", 0, false, structMeta, val);
+        var override1 = MakeStructOverride("B.esp", 1, true, structMeta, val);
+
+        var result = Classify([master, override1]);
+
+        var boundsDiff = result.Diffs.First(d => d.FieldName == "Bounds");
+        Assert.NotNull(boundsDiff.Children);
+        Assert.All(boundsDiff.Children!, child =>
+            Assert.Equal(ConflictThis.IdenticalToMaster, child.CellStates["B.esp"]));
+    }
+
+    [Fact]
+    public void Classify_StructField_ThreePluginsTwoDisagreeOnSubField_ConflictWinsAndConflictLoses()
+    {
+        var subX = Meta("X", "int");
+        var structMeta = StructMeta("Pos", subX);
+
+        var masterVal = JsonSerializer.Deserialize<JsonElement>("{\"X\": 0}");
+        var loserVal = JsonSerializer.Deserialize<JsonElement>("{\"X\": 5}");
+        var winnerVal = JsonSerializer.Deserialize<JsonElement>("{\"X\": 10}");
+
+        var master = MakeStructOverride("A.esp", 0, false, structMeta, masterVal);
+        var loser = MakeStructOverride("B.esp", 1, false, structMeta, loserVal);
+        var winner = MakeStructOverride("C.esp", 2, true, structMeta, winnerVal);
+
+        var result = Classify([master, loser, winner]);
+
+        var posDiff = result.Diffs.First(d => d.FieldName == "Pos");
+        Assert.NotNull(posDiff.Children);
+
+        var xChild = posDiff.Children!.First(c => c.FieldName == "X");
+        Assert.Equal(ConflictThis.ConflictWins, xChild.CellStates["C.esp"]);
+        Assert.Equal(ConflictThis.ConflictLoses, xChild.CellStates["B.esp"]);
+    }
+
+    [Fact]
+    public void Classify_StructField_WinnerMissingField_ChildrenBuiltFromOtherPlugins()
+    {
+        var subX = Meta("X", "int");
+        var structMeta = StructMeta("Pos", subX);
+
+        var masterVal = JsonSerializer.Deserialize<JsonElement>("{\"X\": 0}");
+        var overrideVal = JsonSerializer.Deserialize<JsonElement>("{\"X\": 5}");
+
+        // C.esp is the winner but doesn't have "Pos" at all
+        var master = MakeStructOverride("A.esp", 0, false, structMeta, masterVal);
+        var override1 = MakeStructOverride("B.esp", 1, false, structMeta, overrideVal);
+        var winnerWithoutField = new RecordDetail("000001:Test.esp", "C.esp", 2, true, null, []);
+
+        var result = Classify([master, override1, winnerWithoutField]);
+
+        var posDiff = result.Diffs.FirstOrDefault(d => d.FieldName == "Pos");
+        Assert.NotNull(posDiff);
+        Assert.NotNull(posDiff!.Children);
+        Assert.Contains(posDiff.Children!, c => c.FieldName == "X");
+    }
+
+    [Fact]
+    public void Classify_StructField_SubFieldAbsentInOnePlugin_ThatPluginOmittedFromChildCellStates()
+    {
+        var subX = Meta("X", "int");
+        var subY = Meta("Y", "int");
+        var structMeta = StructMeta("Bounds", subX, subY);
+
+        // B.esp has no Y in its struct
+        var masterVal = JsonSerializer.Deserialize<JsonElement>("{\"X\": 10, \"Y\": 20}");
+        var overrideVal = JsonSerializer.Deserialize<JsonElement>("{\"X\": 15}");
+
+        var master = MakeStructOverride("A.esp", 0, false, structMeta, masterVal);
+        var override1 = MakeStructOverride("B.esp", 1, true, structMeta, overrideVal);
+
+        var result = Classify([master, override1]);
+
+        var boundsDiff = result.Diffs.First(d => d.FieldName == "Bounds");
+        Assert.NotNull(boundsDiff.Children);
+
+        var yChild = boundsDiff.Children!.FirstOrDefault(c => c.FieldName == "Y");
+        Assert.NotNull(yChild);
+        Assert.False(yChild!.CellStates.ContainsKey("B.esp")); // absent → omitted
+    }
+
+    [Fact]
+    public void Classify_StructField_ArraySubFieldSkipped_NotIncludedInChildren()
+    {
+        // Kills the || → && mutant on line 133: array sub-fields must be skipped.
+        var subX = Meta("X", "int");
+        var subYArray = new FieldMetadata("Y", "array", true, [], []);
+        var structMeta = new FieldMetadata("Bounds", "struct", false, [], [], Fields: [subX, subYArray]);
+
+        var masterVal = JsonSerializer.Deserialize<JsonElement>("{\"X\": 10, \"Y\": [1,2]}");
+        var overrideVal = JsonSerializer.Deserialize<JsonElement>("{\"X\": 15, \"Y\": [3,4]}");
+
+        var master = MakeStructOverride("A.esp", 0, false, structMeta, masterVal);
+        var override1 = MakeStructOverride("B.esp", 1, true, structMeta, overrideVal);
+
+        var result = Classify([master, override1]);
+
+        var boundsDiff = result.Diffs.First(d => d.FieldName == "Bounds");
+        Assert.NotNull(boundsDiff.Children);
+        Assert.DoesNotContain(boundsDiff.Children!, c => c.FieldName == "Y");
+        Assert.Contains(boundsDiff.Children!, c => c.FieldName == "X");
+    }
+
+    [Fact]
+    public void Classify_StructField_SubFieldWinnerIsHighestLoadOrder()
+    {
+        // Kills the MaxBy → MinBy mutant: WinnerPlugin must be the highest load-order plugin with a value.
+        var subX = Meta("X", "int");
+        var structMeta = StructMeta("Pos", subX);
+
+        var masterVal = JsonSerializer.Deserialize<JsonElement>("{\"X\": 0}");
+        var overrideVal = JsonSerializer.Deserialize<JsonElement>("{\"X\": 5}");
+
+        var master = MakeStructOverride("A.esp", 0, false, structMeta, masterVal);
+        var override1 = MakeStructOverride("B.esp", 1, true, structMeta, overrideVal);
+
+        var result = Classify([master, override1]);
+
+        var xChild = result.Diffs.First(d => d.FieldName == "Pos").Children!.First(c => c.FieldName == "X");
+        Assert.Equal("B.esp", xChild.WinnerPlugin);
+        Assert.Equal(5, ((System.Text.Json.JsonElement)xChild.WinnerValue!).GetInt32());
+    }
+
+    [Fact]
+    public void Classify_StructField_JsonNullSubField_TreatedAsAbsent()
+    {
+        // Kills the false-condition mutant on ExtractSubFieldValue: JSON null must map to null, not a JsonElement.
+        var subX = Meta("X", "int");
+        var subY = Meta("Y", "int");
+        var structMeta = StructMeta("Bounds", subX, subY);
+
+        var masterVal = JsonSerializer.Deserialize<JsonElement>("{\"X\": 10, \"Y\": 20}");
+        var overrideVal = JsonSerializer.Deserialize<JsonElement>("{\"X\": 15, \"Y\": null}");
+
+        var master = MakeStructOverride("A.esp", 0, false, structMeta, masterVal);
+        var override1 = MakeStructOverride("B.esp", 1, true, structMeta, overrideVal);
+
+        var result = Classify([master, override1]);
+
+        var yChild = result.Diffs.First(d => d.FieldName == "Bounds").Children!.FirstOrDefault(c => c.FieldName == "Y");
+        Assert.NotNull(yChild);
+        Assert.False(yChild!.CellStates.ContainsKey("B.esp")); // JSON null → treated as absent
+    }
 }

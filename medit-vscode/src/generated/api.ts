@@ -267,6 +267,7 @@ export interface components {
             cellStates?: {
                 [key: string]: components["schemas"]["ConflictThis"];
             } | null;
+            children?: components["schemas"]["FieldDiff"][] | null;
         };
         FieldMetadata: {
             name?: string | null;

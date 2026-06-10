@@ -1,6 +1,6 @@
 # Phase 9.8 — Struct Sub-Row Display
 
-**Status: Not Started**
+**Status: Complete**
 
 *Design to be finalized in a grill session before implementation.*
 
@@ -71,4 +71,7 @@ worlds — duplicate display logic AND a new backend concept.
 
 ## Proof
 
-*To be filled in on completion.*
+Implemented Option B. `FieldDiff.Children` added; `ConflictClassifier.BuildStructChildren` populates
+per-sub-field `Values` + `CellStates` via `ExtractSubFieldValue`. Frontend renders child rows via
+`DiffRow` with `depth=1` and `parentFieldName` for correct pending-column keying. 368 backend tests
+(+5 new struct-child tests), 142 frontend tests, mutation score 100%.

@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrayRowGroup } from './ArrayRowGroup';
 import { FormKeyPicker } from './FormKeyPicker';
-import { StructRowGroup } from './StructRowGroup';
 import { buildColumns, toStr } from './recordUtils';
 import type { Column } from './recordUtils';
 import type { CompareOverride, CompareResult, ConflictAll, ConflictThis, FieldDiff, FieldMetadata, PendingChange, RecordDetail } from './types';
@@ -28,6 +27,17 @@ const baseCell: React.CSSProperties = {
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
+};
+
+const toggleBtnStyle: React.CSSProperties = {
+  background: 'none',
+  border: 'none',
+  cursor: 'pointer',
+  color: fg,
+  fontFamily: mono,
+  fontSize: '11px',
+  padding: '0 3px 0 0',
+  lineHeight: 1,
 };
 
 const ROW_BG: Partial<Record<ConflictAll, string>> = {
@@ -222,13 +232,9 @@ function renderCell(
       />
     );
   }
+  // struct fields in the diff table are handled via sub-rows; StructRowGroup is used by ArrayRowGroup
   if (meta.type === 'struct') {
-    return (
-      <StructRowGroup
-        value={value as Record<string, unknown>} meta={meta} editMode={editMode} port={port}
-        onOpen={onOpen} onCommit={v => onCommit(v)} storageKey={`struct:${meta.name}`}
-      />
-    );
+    return <span style={{ opacity: 0.5 }}>{'{…}'}</span>;
   }
   return <ScalarCell value={value} meta={meta} editMode={editMode} onCommit={onCommit} />;
 }
@@ -343,23 +349,43 @@ interface DiffRowProps {
   onOpen: (fk: string) => void;
   onEdit: (plugin: string, fieldName: string, value: unknown) => void;
   onRevert: (changeId: string) => void;
+  depth?: number;
+  hasChildren?: boolean;
+  isExpanded?: boolean;
+  onToggle?: () => void;
+  overrideMeta?: FieldMetadata;
+  parentFieldName?: string;
 }
 
 function DiffRow({
   diff, conflictAll, columns, overrideMap, fieldMetaMap, editMode, port,
   pendingChangeMap, onOpen, onEdit, onRevert,
+  depth = 0, hasChildren, isExpanded, onToggle, overrideMeta, parentFieldName,
 }: DiffRowProps) {
-  const meta = fieldMetaMap[diff.fieldName];
+  const meta = overrideMeta ?? fieldMetaMap[diff.fieldName];
   if (!meta) return null;
 
   return (
     <tr style={{ backgroundColor: getRowBg(conflictAll) }}>
-      <td style={{ ...baseCell, opacity: 0.75, userSelect: 'text' }}>{diff.fieldName}</td>
+      <td style={{ ...baseCell, opacity: 0.75, userSelect: 'text', paddingLeft: depth > 0 ? 24 : undefined }}>
+        {hasChildren && (
+          <button style={toggleBtnStyle} onClick={onToggle}>{isExpanded ? '▼' : '▶'}</button>
+        )}
+        {diff.fieldName}
+      </td>
       {columns.map(col => {
         if (col.kind === 'disk') {
           const { override: o } = col;
+          const cellStyle = { ...baseCell, ...getCellStyle(diff.cellStates?.[o.plugin]), userSelect: 'text' as const };
+          if (hasChildren) {
+            return (
+              <td key={`disk:${o.plugin}`} style={cellStyle}>
+                {isExpanded ? null : <span style={{ opacity: 0.5 }}>{'{…}'}</span>}
+              </td>
+            );
+          }
           return (
-            <td key={`disk:${o.plugin}`} style={{ ...baseCell, ...getCellStyle(diff.cellStates?.[o.plugin]), userSelect: 'text' }}>
+            <td key={`disk:${o.plugin}`} style={cellStyle}>
               {renderCell(diff.values[o.plugin], meta, editMode, port, onOpen,
                 v => onEdit(o.plugin, diff.fieldName, v))}
             </td>
@@ -368,8 +394,12 @@ function DiffRow({
 
         // pending companion column
         const override = overrideMap[col.plugin];
-        const pendingValue = override?.pendingFields?.[diff.fieldName];
-        const change = pendingChangeMap[`${col.plugin}:${diff.fieldName}`];
+        const pendingLookupField = parentFieldName ?? diff.fieldName;
+        const rawPending = override?.pendingFields?.[pendingLookupField];
+        const pendingValue = parentFieldName !== undefined
+          ? (rawPending as Record<string, unknown> | undefined)?.[diff.fieldName]
+          : rawPending;
+        const change = pendingChangeMap[`${col.plugin}:${pendingLookupField}`];
         const hasPending = pendingValue !== undefined;
         return (
           <td
@@ -423,6 +453,7 @@ export function RecordPanel() {
   const [editMode, setEditMode] = useState(false);
   const [savingPlugin, setSavingPlugin] = useState<string | null>(null);
   const [copyPickerPlugin, setCopyPickerPlugin] = useState<string | null>(null);
+  const [expandedStructs, setExpandedStructs] = useState<Set<string>>(new Set());
 
   const port = mEditWindow.mEditBackendPort;
 
@@ -549,7 +580,11 @@ export function RecordPanel() {
 
   const fieldMetaMap = useMemo((): Record<string, FieldMetadata> => {
     const map: Record<string, FieldMetadata> = {};
-    for (const fv of result?.overrides[0]?.fields ?? []) map[fv.metadata.name] = fv.metadata;
+    for (const o of result?.overrides ?? []) {
+      for (const fv of o.fields) {
+        if (!map[fv.metadata.name]) map[fv.metadata.name] = fv.metadata;
+      }
+    }
     return map;
   }, [result]);
 
@@ -649,22 +684,64 @@ export function RecordPanel() {
             </tr>
           </thead>
           <tbody>
-            {diffs.map(diff => (
-              <DiffRow
-                key={diff.fieldName}
-                diff={diff}
-                conflictAll={conflictAll}
-                columns={columns}
-                overrideMap={overrideMap}
-                fieldMetaMap={fieldMetaMap}
-                editMode={editMode}
-                port={port}
-                pendingChangeMap={pendingChangeMap}
-                onOpen={handleOpen}
-                onEdit={(plugin, fieldName, value) => { void handleEdit(plugin, fieldName, value); }}
-                onRevert={changeId => { void handleRevert(changeId); }}
-              />
-            ))}
+            {diffs.flatMap(diff => {
+              const hasChildren = (diff.children?.length ?? 0) > 0;
+              const isExpanded = expandedStructs.has(diff.fieldName);
+              const rows: React.ReactNode[] = [
+                <DiffRow
+                  key={diff.fieldName}
+                  diff={diff}
+                  conflictAll={conflictAll}
+                  columns={columns}
+                  overrideMap={overrideMap}
+                  fieldMetaMap={fieldMetaMap}
+                  editMode={editMode}
+                  port={port}
+                  pendingChangeMap={pendingChangeMap}
+                  onOpen={handleOpen}
+                  onEdit={(plugin, fieldName, value) => { void handleEdit(plugin, fieldName, value); }}
+                  onRevert={changeId => { void handleRevert(changeId); }}
+                  hasChildren={hasChildren}
+                  isExpanded={isExpanded}
+                  onToggle={() => setExpandedStructs(prev => {
+                    const next = new Set(prev);
+                    if (next.has(diff.fieldName)) next.delete(diff.fieldName);
+                    else next.add(diff.fieldName);
+                    return next;
+                  })}
+                />,
+              ];
+              if (hasChildren && isExpanded) {
+                for (const child of diff.children ?? []) {
+                  const subFieldMeta = fieldMetaMap[diff.fieldName]?.fields?.find(f => f.name === child.fieldName);
+                  rows.push(
+                    <DiffRow
+                      key={`${diff.fieldName}.${child.fieldName}`}
+                      diff={child}
+                      conflictAll={conflictAll}
+                      columns={columns}
+                      overrideMap={overrideMap}
+                      fieldMetaMap={fieldMetaMap}
+                      editMode={editMode}
+                      port={port}
+                      pendingChangeMap={pendingChangeMap}
+                      onOpen={handleOpen}
+                      onEdit={(plugin, subField, subValue) => {
+                        const disk = (diff.values[plugin] as Record<string, unknown>) ?? {};
+                        const pending = overrideMap[plugin]?.pendingFields?.[diff.fieldName] as Record<string, unknown> | undefined;
+                        const cur = pending !== undefined ? { ...disk, ...pending } : disk;
+                        void handleEdit(plugin, diff.fieldName, { ...cur, [subField]: subValue });
+                      }}
+                      onRevert={changeId => { void handleRevert(changeId); }}
+                      depth={1}
+                      overrideMeta={subFieldMeta}
+                      parentFieldName={diff.fieldName}
+                    />,
+                  );
+                }
+              }
+              return rows;
+            })}
           </tbody>
         </table>
       </div>

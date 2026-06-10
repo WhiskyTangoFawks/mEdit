@@ -62,7 +62,8 @@ public record FieldDiff(
     Dictionary<string, object?> Values,
     string WinnerPlugin,
     object? WinnerValue,
-    IReadOnlyDictionary<string, ConflictThis> CellStates);
+    IReadOnlyDictionary<string, ConflictThis> CellStates,
+    IReadOnlyList<FieldDiff>? Children = null);
 
 public record ClassifyResult(
     ConflictAll ConflictAll,

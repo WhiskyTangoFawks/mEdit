@@ -475,6 +475,160 @@ describe('RecordPanel — postMessage wiring', () => {
 
 // ── LOAD_RECORD state management (bugs 1, 2, 3) ───────────────────────────────
 
+// ── Struct sub-row display ────────────────────────────────────────────────────
+
+const structFieldMeta: FieldMetadata = {
+  name: 'Bounds',
+  type: 'struct',
+  isArray: false,
+  validFormKeyTypes: [],
+  enumValues: [],
+  fields: [
+    { name: 'X', type: 'int', isArray: false, validFormKeyTypes: [], enumValues: [] },
+    { name: 'Y', type: 'int', isArray: false, validFormKeyTypes: [], enumValues: [] },
+  ],
+};
+
+const structCompareResult = {
+  conflictAll: 'Override',
+  overrides: [
+    {
+      formKey: '000001:Fallout4.esm',
+      plugin: 'Fallout4.esm',
+      loadOrderIndex: 0,
+      isWinner: false,
+      editorId: 'TestNPC',
+      fields: [{ metadata: structFieldMeta, value: { X: 10, Y: 20 } }],
+      pendingFields: {},
+      conflictThis: 'Master',
+    },
+    {
+      formKey: '000001:Fallout4.esm',
+      plugin: 'MyMod.esp',
+      loadOrderIndex: 1,
+      isWinner: true,
+      editorId: 'TestNPC',
+      fields: [{ metadata: structFieldMeta, value: { X: 15, Y: 20 } }],
+      pendingFields: {},
+      conflictThis: 'Override',
+    },
+  ],
+  diffs: [
+    {
+      fieldName: 'Bounds',
+      values: { 'Fallout4.esm': { X: 10, Y: 20 }, 'MyMod.esp': { X: 15, Y: 20 } },
+      winnerPlugin: 'MyMod.esp',
+      winnerValue: { X: 15, Y: 20 },
+      cellStates: { 'MyMod.esp': 'Override' },
+      children: [
+        {
+          fieldName: 'X',
+          values: { 'Fallout4.esm': 10, 'MyMod.esp': 15 },
+          winnerPlugin: 'MyMod.esp',
+          winnerValue: 15,
+          cellStates: { 'MyMod.esp': 'Override' },
+        },
+        {
+          fieldName: 'Y',
+          values: { 'Fallout4.esm': 20, 'MyMod.esp': 20 },
+          winnerPlugin: 'MyMod.esp',
+          winnerValue: 20,
+          cellStates: { 'MyMod.esp': 'IdenticalToMaster' },
+        },
+      ],
+    },
+  ],
+};
+
+describe('RecordPanel — struct sub-rows', () => {
+  beforeEach(() => {
+    vi.stubGlobal('mEditFormKey', '000001:Fallout4.esm');
+    vi.stubGlobal('mEditBackendPort', 15172);
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (String(url).includes('/compare')) return { ok: true, json: () => Promise.resolve(structCompareResult) };
+      if (String(url).includes('/changes'))  return { ok: true, json: () => Promise.resolve([]) };
+      if (String(url).includes('/plugins'))  return { ok: true, json: () => Promise.resolve(pluginsResponse) };
+      return { ok: false, status: 404, statusText: 'Not Found' };
+    }));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('struct parent row renders ▶ toggle and {…} placeholder in value cells', async () => {
+    render(<RecordPanel />);
+    await waitFor(() => screen.getByText('Bounds'));
+    expect(screen.getByText('▶')).toBeInTheDocument();
+    expect(screen.getAllByText('{…}').length).toBeGreaterThan(0);
+  });
+
+  it('child rows appear after clicking ▶ toggle', async () => {
+    render(<RecordPanel />);
+    await waitFor(() => screen.getByText('▶'));
+    fireEvent.click(screen.getByText('▶'));
+    await waitFor(() => expect(screen.getByText('X')).toBeInTheDocument());
+    expect(screen.getByText('Y')).toBeInTheDocument();
+  });
+
+  it('child row for X shows values from sub-field', async () => {
+    render(<RecordPanel />);
+    await waitFor(() => screen.getByText('▶'));
+    fireEvent.click(screen.getByText('▶'));
+    await waitFor(() => screen.getByText('X'));
+    expect(screen.getByText('10')).toBeInTheDocument();
+    expect(screen.getByText('15')).toBeInTheDocument();
+  });
+
+  it('toggle collapses child rows when clicked again', async () => {
+    render(<RecordPanel />);
+    await waitFor(() => screen.getByText('▶'));
+    fireEvent.click(screen.getByText('▶'));
+    await waitFor(() => screen.getByText('X'));
+    fireEvent.click(screen.getByText('▼'));
+    await waitFor(() => expect(screen.queryByText('X')).not.toBeInTheDocument());
+  });
+
+  it('child row X has correct cell background from cellStates (Override = green)', async () => {
+    render(<RecordPanel />);
+    await waitFor(() => screen.getByText('▶'));
+    fireEvent.click(screen.getByText('▶'));
+    await waitFor(() => screen.getByText('15'));
+    const cell = screen.getByText('15').closest('td')!;
+    expect(cell.style.backgroundColor).toBe('rgba(76, 175, 80, 0.18)');
+  });
+
+  it('child edit calls handleEdit with parent field name and merged struct', async () => {
+    render(<RecordPanel />);
+    await waitFor(() => screen.getByText('Edit'));
+    fireEvent.click(screen.getByText('Edit'));
+    await waitFor(() => screen.getByText('▶'));
+    fireEvent.click(screen.getByText('▶'));
+    await waitFor(() => screen.getByText('X'));
+
+    // Find the input for the X sub-field in the Fallout4.esm column (value 10)
+    const inputFor10 = screen.getByDisplayValue('10');
+    fireEvent.change(inputFor10, { target: { value: '99' } });
+    fireEvent.blur(inputFor10);
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/records/'),
+        expect.objectContaining({
+          method: 'PATCH',
+          body: expect.stringContaining('"Bounds"'),
+        }),
+      ),
+    );
+
+    const patchCall = (fetch as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c: unknown[]) => (c[1] as RequestInit)?.method === 'PATCH',
+    );
+    const body = JSON.parse((patchCall![1] as RequestInit).body as string) as {
+      plugin: string;
+      fields: Record<string, unknown>;
+    };
+    expect(body.fields['Bounds']).toMatchObject({ X: 99 });
+  });
+});
+
 describe('RecordPanel — LOAD_RECORD state management', () => {
   beforeEach(() => {
     vi.stubGlobal('mEditFormKey', '000001:Fallout4.esm');

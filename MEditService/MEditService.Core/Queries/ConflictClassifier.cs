@@ -102,8 +102,11 @@ public sealed class ConflictClassifier : IConflictClassifier
         IReadOnlyList<RecordDetail> records,
         RecordDetail winner,
         string masterPlugin,
-        HashSet<string> sortedArrays) =>
-        fieldNames
+        HashSet<string> sortedArrays)
+    {
+        var masterFieldMeta = records[0].Fields
+            .ToDictionary(f => f.Metadata.Name, f => f.Metadata);
+        return fieldNames
             .Select(fieldName =>
             {
                 var values = records.ToDictionary(
@@ -111,10 +114,52 @@ public sealed class ConflictClassifier : IConflictClassifier
                     o => o.Fields.FirstOrDefault(f => f.Metadata.Name == fieldName)?.Value);
                 var winnerValue = values.GetValueOrDefault(winner.Plugin);
                 var cellStates = ComputeCellStates(fieldName, values, masterPlugin, records, sortedArrays);
-                return new FieldDiff(fieldName, values, winner.Plugin, winnerValue, cellStates);
+                var meta = masterFieldMeta.GetValueOrDefault(fieldName);
+                var children = meta?.Fields != null
+                    ? BuildStructChildren(meta.Fields, values, masterPlugin, records)
+                    : null;
+                return new FieldDiff(fieldName, values, winner.Plugin, winnerValue, cellStates, children);
             })
             .Where(d => d.Values.Values.Any(v => v != null))
             .ToList();
+    }
+
+    private static List<FieldDiff>? BuildStructChildren(
+        IReadOnlyList<FieldMetadata> subFields,
+        Dictionary<string, object?> parentValues,
+        string masterPlugin,
+        IReadOnlyList<RecordDetail> records)
+    {
+        var children = new List<FieldDiff>();
+        foreach (var subField in subFields)
+        {
+            if (subField.IsArray || subField.Fields?.Count > 0) continue;
+
+            var subValues = parentValues.ToDictionary(
+                kv => kv.Key,
+                kv => (object?)ExtractSubFieldValue(kv.Value, subField.Name));
+
+            if (subValues.Values.All(v => v == null)) continue;
+
+            var fieldWinner = records
+                .Where(r => subValues.GetValueOrDefault(r.Plugin) != null)
+                .MaxBy(r => r.LoadOrderIndex)!;
+
+            var winnerValue = subValues[fieldWinner.Plugin];
+            var cellStates = ComputeCellStates(subField.Name, subValues, masterPlugin, records, []);
+            children.Add(new FieldDiff(subField.Name, subValues, fieldWinner.Plugin, winnerValue, cellStates));
+        }
+        return children.Count > 0 ? children : null;
+    }
+
+    private static System.Text.Json.JsonElement? ExtractSubFieldValue(object? structValue, string subFieldName)
+    {
+        if (structValue is System.Text.Json.JsonElement je &&
+            je.ValueKind == System.Text.Json.JsonValueKind.Object &&
+            je.TryGetProperty(subFieldName, out var sub))
+            return sub.ValueKind == System.Text.Json.JsonValueKind.Null ? null : sub;
+        return null;
+    }
 
     private static Dictionary<string, ConflictThis> ComputeCellStates(
         string fieldName,
