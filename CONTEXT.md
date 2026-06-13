@@ -1,131 +1,89 @@
-# mEdit
+# CONTEXT
 
-A modern xEdit — a VS Code extension and local C# service for editing Bethesda plugin files and managing a load order. The primary user is someone who has hit the limits of xEdit and wants a more capable, scriptable, agent-friendly tool. UI accessibility matters: new users shouldn't bounce off it, but the tool does not hide the domain from them.
-
-## Language
+## Domain Language
 
 ### Records & identity
 
-**Mod**:
-A distributable package that may contain one or more plugins, loose asset files (textures, meshes, sounds), and BA2 archives. mEdit operates on the plugin component of a mod; asset management is out of scope for v1.
-_Avoid_: plugin (a mod may contain many; they are distinct things)
+**Mod**: Distributable package (plugins + loose assets + BA2s). mEdit operates on plugins only. _Avoid: plugin._
 
-**Plugin**:
-A `.esp`, `.esm`, or `.esl` binary file that Bethesda games load to define or modify game records. The primary unit mEdit operates on.
-_Avoid_: mod (a mod is the full distributable package, of which a plugin is one part)
+**Plugin**: `.esp`/`.esm`/`.esl` binary; primary unit mEdit operates on. _Avoid: mod._
 
-**Record**:
-A single named entity within a plugin — an NPC, weapon, cell, etc. — identified by its FormKey.
-_Avoid_: entry, item
+**Record**: Named entity in a plugin (NPC, weapon, cell, etc.), identified by FormKey. _Avoid: entry, item._
 
-**FormKey**:
-The canonical, cross-load-order identifier for a record. Composed of a FormID and the plugin that originally defined it (e.g. `000984:Skyrim.esm`). Stable regardless of which slot the plugin occupies in any given load order.
-_Avoid_: FormID (that's the local integer part only)
+**FormKey**: Cross-load-order record identifier: FormID + originating plugin (e.g. `000984:Skyrim.esm`). Stable regardless of load-order slot. _Avoid: FormID._
 
-**FormID**:
-The 3-byte integer part of a FormKey, local to a single load-order slot. Not portable across different load orders.
-_Avoid_: FormKey
+**FormID**: 3-byte integer part of a FormKey; local to one load-order slot. Not portable. _Avoid: FormKey._
 
-**FormLink**:
-A typed reference field on a record that holds the FormKey of another record. For example, an NPC record has a FormLink to its Race record. FormLinks form the reference graph that drives "Referenced By" queries and delete/renumber safety checks.
+**FormLink**: Typed reference field on a record holding another record's FormKey. FormLinks form the reference graph for "Referenced By" and delete/renumber safety checks.
 
-**EditorID (EDID)**:
-A human-readable string identifier for a record (e.g. `NordRace`). Stable across load orders; not guaranteed globally unique.
-_Avoid_: name, label
+**EditorID (EDID)**: Human-readable string identifier (e.g. `NordRace`). Stable across load orders; not guaranteed unique. _Avoid: name, label._
 
-**Master**:
-A plugin declared as a dependency in another plugin's header. Records in a master can be referenced by the dependent plugin via FormKey.
-_Avoid_: parent plugin, base plugin
+**Master**: Plugin declared as a dependency in another plugin's header. _Avoid: parent plugin, base plugin._
 
-**Immutable plugin**:
-A plugin that mEdit treats as read-only and will not write to. Currently derived from Mutagen's knowledge of which plugins are base-game files — it is not a property of the plugin file itself. The intent is to prevent accidental edits to files the user doesn't own.
-_Avoid_: read-only plugin, locked plugin
+**Immutable plugin**: Plugin mEdit treats as read-only — base-game files per Mutagen. Not a property of the file itself. _Avoid: read-only plugin, locked plugin._
 
-**Patch**:
-A plugin whose primary purpose is to hold overrides that reconcile conflicts between other plugins — rather than defining new records. A patch is a plugin by structure; the distinction is intent.
-_Avoid_: patch plugin, conflict resolution plugin
+**Patch**: Plugin whose purpose is holding overrides that reconcile conflicts. Same structure as any plugin; distinction is intent. _Avoid: patch plugin, conflict resolution plugin._
 
 ### Load order & overrides
 
-**Load order**:
-The ordered list of plugins the game loads at runtime. Determines which override wins for every record.
-_Avoid_: plugin list
+**Load order**: Ordered list of plugins the game loads; determines which override wins. _Avoid: plugin list._
 
-**Override**:
-A record definition in a plugin other than the record's originating plugin. The same FormKey appears in multiple plugins; each later plugin may change some or all field values.
-_Avoid_: copy, patch entry
+**Override**: Record definition in a plugin other than the originating plugin. _Avoid: copy, patch entry._
 
-**Override stack**:
-The full ordered sequence of overrides for a single FormKey across all loaded plugins, in load-order position. This is the primary thing the compare view displays, and the structure conflict detection operates over.
+**Override stack**: Full ordered sequence of overrides for one FormKey across all loaded plugins. Primary structure for the compare view and conflict detection.
 
-**Winning override**:
-The last override in load order — the version of a record the game actually uses.
-_Avoid_: active record, final record
+**Winning override**: Last override in load order — what the game actually uses. _Avoid: active record, final record._
 
-**ITM (Identical to Master)**:
-An override whose field values are byte-for-byte equal to the master record. Wastes a load-order slot with no effect.
-_Avoid_: clean record (ambiguous)
+**ITM (Identical to Master)**: Override byte-for-byte equal to the master; wastes a load-order slot with no effect. _Avoid: clean record._
 
-**ConflictAll**:
-The row-level conflict classification for a record's override stack as a whole. Drives the background color of a record row in the compare grid. Values in ascending severity:
+**ConflictAll**: Row-level conflict classification for a record's override stack. Drives record-row background color. Values (ascending severity):
 
-- **OnlyOne** — the record exists in one plugin only; no override chain.
-- **NoConflict** — all overrides agree on all field values. Pure ITMs.
-- **ConflictBenign** — plugins differ on at least one field, but every differing field is marked low-priority (cosmetic or redundant in practice).
-- **Override** — one or more plugins override the record, but the changes are uncontested — no two plugins disagree on the same field.
-- **Conflict** — two or more plugins disagree on at least one field; the last plugin in load order wins.
-- **ConflictCritical** — conflict on a field explicitly marked critical, or an injected record is in conflict.
+- **OnlyOne** — exists in one plugin only
+- **NoConflict** — all overrides agree
+- **ConflictBenign** — plugins differ but only on low-priority fields
+- **Override** — overrides present; no two plugins disagree on the same field
+- **Conflict** — two or more plugins disagree on at least one field; last plugin wins
+- **ConflictCritical** — conflict on a critical field, or injected record in conflict
 
-_Avoid_: the old four-state "change lost / override / conflict / clean" shorthand — it conflates ConflictAll and ConflictThis.
+_Avoid: the old four-state shorthand — it conflates ConflictAll and ConflictThis._
 
-**ConflictThis**:
-The per-plugin classification for one plugin's version of a record in the override stack. Drives the cell color for that plugin's column in the compare grid. Independently tracked for each `(FormKey, plugin)` pair:
+**ConflictThis**: Per-plugin classification for one plugin's version of a record. Drives cell color in the compare grid.
 
-- **Ignored** — field has `cpIgnore` priority; excluded from conflict logic.
-- **OnlyOne** — single-plugin record; no comparison.
-- **Master** — this is the originating plugin's version (load-order position 0 for this FormKey).
-- **IdenticalToMaster** — same values as the master; the override adds nothing.
-- **ConflictBenign** — differs but the difference is low-priority.
-- **Override** — uncontested change (no later plugin contradicts this field).
-- **ConflictWins** — wins the conflict; this plugin's value is what the game uses.
-- **ConflictLoses** — loses the conflict; this plugin's change is silently discarded by a later plugin.
+- **Ignored** — `cpIgnore` priority; excluded from conflict logic
+- **OnlyOne** — single-plugin record
+- **Master** — originating plugin's version
+- **IdenticalToMaster** — same values as master
+- **ConflictBenign** — differs but low-priority
+- **Override** — uncontested change
+- **ConflictWins** — wins; game uses this value
+- **ConflictLoses** — loses; change silently overwritten by a later plugin ← most insidious state. See ADR-0016.
 
-"ConflictLoses" is the most insidious state: the load order appears to work but a mod's intended change is being overwritten without warning. See ADR-0016.
+**ConflictPriority**: Per-field modifier affecting conflict detection. Values: `cpIgnore`, `cpBenign`, `cpBenignIfAdded`, `cpNormal`, `cpCritical`. See ADR-0016.
 
-**ConflictPriority**:
-A per-field modifier that changes how conflict detection behaves for that field. The common values: `cpIgnore` (skip entirely), `cpBenign` (cap at benign even if values differ), `cpBenignIfAdded` (benign when absent in master — used on Location Reference XLRL), `cpNormal` (standard), `cpCritical` (elevate to ConflictCritical). Defined by the xEdit field definition table; implemented in mEdit as a Tier 2 refinement. See ADR-0016.
-
-**PartialForm**:
-A record with the `IsPartialForm` header flag set. It intentionally omits fields it doesn't override — the absent fields are not "null" overrides, they are out-of-scope. In the compare grid, absent fields in a partial-form column are omitted entirely, not shown as blank cells. In conflict detection, absent partial-form fields are treated as `cpIgnore`.
-_Avoid_: sparse record, incomplete override.
-
-**Record filter**:
-A DuckDB SQL SELECT stored on the backend session that narrows the record tree to a subset of FormKeys. While active, plugins and record types with no matching records are hidden. Cleared to restore the full tree. Stored as a plain `.sql` file in `mEdit.scriptsPath`; applied via Code Lens or `mEdit.setFilter`. A record filter is a degenerate script — a selection query with no Python body.
-_Avoid_: search filter, query filter
-
-**Filter file**:
-A `.sql` file in `mEdit.scriptsPath` containing a DuckDB SELECT that returns a `form_key` column. VS Code provides syntax highlighting; a Code Lens provides the apply/clear affordance. Filter files and scripts share the same folder and the same file-based UX surface.
-_Avoid_: filter script (scripts have a Python body; filter files do not)
-
-**Script**:
-A Python file with a YAML frontmatter block that declares a SQL query (selecting which records to operate on) and a Python body that iterates those records and calls `edit()` to stage changes. Scripts are the preferred agent output for complex multi-record operations — they are reviewable, rerunnable, and deterministic. All `edit()` calls route through `PendingChangeService`, the same as manual edits. See Phase 15.
-_Avoid_: macro, automation
-
-### Agentic workflows
-
-**Agent**:
-A VS Code chat participant or Language Model tool that assists with mod editing. Agents may call the HTTP API directly for simple tasks, or generate a script for complex multi-record operations where the intent should be reviewable before execution. All edits — whether from direct API calls or script execution — land in pending changes for user approval. See ADR-0012, ADR-0013.
+**PartialForm**: Record with `IsPartialForm` header flag. Absent fields are out-of-scope, not null overrides. In compare grid: absent fields omitted (not shown as blank). In conflict detection: treated as `cpIgnore`. _Avoid: sparse record, incomplete override._
 
 ### Session & index
 
-**Session**:
-The active game environment: a chosen game release plus a load order, loaded into memory and indexed.
-_Avoid_: workspace, environment
+**Session**: Active game environment: chosen game release + load order, loaded and indexed. _Avoid: workspace, environment._
 
-**Index**:
-The DuckDB read model of committed record data. Rebuilt from plugins on session load. A cache, not a source of truth — deleting it loses nothing.
-_Avoid_: database, store
+**Index**: DuckDB read model of committed record data. Rebuilt on session load. Cache, not source of truth — deleting it loses nothing. _Avoid: database, store._
 
-**Pending change**:
-A staged field edit held in memory, not yet written to disk. Visible to the UI but not reflected in the index until saved.
-_Avoid_: draft, unsaved edit
+**Pending change**: Staged field edit held in memory; not yet written to disk. For complex fields, stores the entire new field value atomically — no per-element pending change. _Avoid: draft, unsaved edit._
+
+**Complex field**: Field of type `array` or `struct`. Always committed as one atomic pending change; revert is all-or-nothing at the column level. _Avoid: compound field, nested field._
+
+**Sorted array**: Array with a stable sort key (e.g. `Keywords`, `Perks`, keyed by FormKey). In compare grid: elements aligned by sort key across columns. See ADR-0019. _Avoid: keyed array._
+
+**Unsorted array**: Array with positional elements and no natural sort key (e.g. `Packages`, `Factions`). In compare grid: aligned by index. _Avoid: indexed array._
+
+**VMAD (Virtual Machine Adapter)**: Papyrus scripting subrecord on NPC\_, QUST, PERK, PACK, SCEN, INFO, others. Contains named scripts with named properties (bool, int, float, string, FormKey, struct, and array variants). Has dedicated DuckDB tables; does not go through `SchemaReflector`. See phase-13.md, ADR-0019. _Avoid: script data, Papyrus data._
+
+### Filters & scripts
+
+**Record filter**: DuckDB SELECT stored on the backend session that narrows the record tree. Stored as `.sql` in `mEdit.scriptsPath`; applied via Code Lens or `mEdit.setFilter`. A degenerate script — selection only, no Python body. _Avoid: search filter, query filter._
+
+**Filter file**: `.sql` file in `mEdit.scriptsPath` returning a `form_key` column. Shares folder/UX surface with scripts but has no Python body. _Avoid: filter script._
+
+**Script**: Python file with YAML frontmatter declaring a SQL query + Python body that iterates records and calls `edit()`. All `edit()` calls route through `PendingChangeService`. Preferred agent output for complex multi-record operations — reviewable, rerunnable, deterministic. See Phase 15. _Avoid: macro, automation._
+
+**Agent**: VS Code chat participant or LM tool. May call the HTTP API directly for simple tasks or generate a script for complex ones. All edits land in pending changes. See ADR-0012, ADR-0013.

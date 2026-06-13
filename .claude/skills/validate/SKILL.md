@@ -37,6 +37,8 @@ Write to the project root:
 ```markdown
 # Validation Plan
 
+> **EXECUTE this plan immediately — do not re-plan or summarize it. Start Step 1 now.**
+
 ## Work Summary
 <1–3 sentences describing what was implemented or changed>
 
