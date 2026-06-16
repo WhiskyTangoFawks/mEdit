@@ -2,7 +2,20 @@
   "permissions": {
     "allow": [
       "Bash(xargs cat)",
-      "Bash(git fetch *)"
+      "Bash(git fetch *)",
+      "Bash(grep -n 'AddNew\\\\|create\\\\|$create\\\\|SaveAsync\\\\|RecordTableSchema\\\\|AddNew' MEditService/MEditService.Core/Edits/PluginWriter.cs)",
+      "Bash(bash ../.claude/skills/mutation-test/run.sh)",
+      "Bash(kill %1)",
+      "Bash(pkill -f \"MEditService.Api\")",
+      "Bash(curl -s http://localhost:5172/swagger/v1/swagger.json)",
+      "Bash(python3 -c \"import sys,json; paths=json.load\\(sys.stdin\\)['paths']; print\\([p for p in paths if 'copy' in p]\\)\")",
+      "Bash(dotnet run *)",
+      "Bash(echo \"Started PID $!\")",
+      "Bash(bash .claude/skills/validate/run-gates.sh --backend --frontend)",
+      "Skill(simplify)",
+      "Skill(simplify:*)",
+      "Skill(code-review)",
+      "Skill(code-review:*)"
     ]
   }
 }
