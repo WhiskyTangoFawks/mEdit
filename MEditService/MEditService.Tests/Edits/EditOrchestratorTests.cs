@@ -1034,6 +1034,9 @@ public sealed class EditOrchestratorTests
         public string ReserveFormKey(string plugin) => throw new NotSupportedException();
         public Task<SaveResult> SavePlugin(string plugin, IReadOnlyList<PendingChange> changes) =>
             throw new NotSupportedException();
+        public Task<PreparedPluginSave> PreparePluginSave(string plugin, IReadOnlyList<PendingChange> changes) =>
+            throw new NotSupportedException();
+        public Task ReindexPlugin(string plugin) => throw new NotSupportedException();
         public void SetFilter(string sql) => _inner.SetFilter(sql);
         public void ClearFilter() => _inner.ClearFilter();
 

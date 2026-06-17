@@ -558,4 +558,15 @@ public sealed class PendingChangeServiceTests : IDisposable
         Assert.Single(changes);
         Assert.Equal("agent", changes[0].Source);
     }
+
+    // --- Semaphore lifecycle ---
+
+    [Fact]
+    public void GetStagedFormKeys_ReleasesLockBetweenCalls()
+    {
+        var first = _svc.GetStagedFormKeys("A.esp");
+        var second = _svc.GetStagedFormKeys("A.esp"); // deadlocks if semaphore not released
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+    }
 }

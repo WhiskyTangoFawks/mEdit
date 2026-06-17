@@ -31,6 +31,22 @@ public interface ISessionManager
     Task<SaveResult> SavePlugin(string plugin, IReadOnlyList<PendingChange> changes);
 
     /// <summary>
+    /// Writes <paramref name="changes"/> to a temporary file and returns a <see cref="PreparedPluginSave"/>
+    /// that can be committed (rename temp → final) or disposed (delete temp).
+    /// Throws <see cref="InvalidOperationException"/> if no session is loaded.
+    /// Throws <see cref="KeyNotFoundException"/> if the plugin is not found in the current session.
+    /// </summary>
+    Task<PreparedPluginSave> PreparePluginSave(string plugin, IReadOnlyList<PendingChange> changes);
+
+    /// <summary>
+    /// Re-reads <paramref name="plugin"/> from disk and re-indexes it into the record repository,
+    /// then recomputes winners. Call after committing a prepared save to disk.
+    /// Throws <see cref="InvalidOperationException"/> if no session is loaded.
+    /// Throws <see cref="KeyNotFoundException"/> if the plugin is not found in the current session.
+    /// </summary>
+    Task ReindexPlugin(string plugin);
+
+    /// <summary>
     /// Reserves and returns the next available FormKey string for <paramref name="plugin"/>,
     /// atomically incrementing the internal counter.
     /// Throws <see cref="ArgumentException"/> if the plugin has no reservation counter (not loaded or immutable).

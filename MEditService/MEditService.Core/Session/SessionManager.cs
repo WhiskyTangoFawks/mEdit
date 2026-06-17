@@ -20,6 +20,8 @@ public sealed class SessionManager : ISessionManager, IDisposable
     private IRecordRepository? _repository;
     private readonly Dictionary<string, uint> _nextFormIds = new(StringComparer.OrdinalIgnoreCase);
 
+    private const string NoSessionMessage = "No session loaded.";
+
     private string? _dataFolderPath;
     private string? _pluginsTxtPath;
     private GameRelease _gameRelease;
@@ -107,7 +109,7 @@ public sealed class SessionManager : ISessionManager, IDisposable
         lock (_lock)
         {
             if (_session is null)
-                throw new InvalidOperationException("No session loaded.");
+                throw new InvalidOperationException(NoSessionMessage);
 
             var filePath = Path.Combine(_dataFolderPath!, name);
             if (File.Exists(filePath))
@@ -127,24 +129,21 @@ public sealed class SessionManager : ISessionManager, IDisposable
 
     public async Task<SaveResult> SavePlugin(string plugin, IReadOnlyList<PendingChange> changes)
     {
-        PluginMetadata metadata;
-        IRecordRepository repository;
-        GameRelease gameRelease;
-
-        lock (_lock)
-        {
-            if (_session == null)
-                throw new InvalidOperationException("No session loaded.");
-            var meta = _session.Plugins.FirstOrDefault(p =>
-                string.Equals(p.Name, plugin, StringComparison.OrdinalIgnoreCase));
-            if (meta == null)
-                throw new KeyNotFoundException($"Plugin '{plugin}' not found in session.");
-            metadata = meta;
-            repository = _repository!;
-            gameRelease = _gameRelease;
-        }
-
+        var (metadata, _, gameRelease) = RequirePlugin(plugin);
         var result = await _writer.SaveAsync(metadata.Path, changes, gameRelease);
+        await ReindexPlugin(plugin);
+        return result;
+    }
+
+    public async Task<PreparedPluginSave> PreparePluginSave(string plugin, IReadOnlyList<PendingChange> changes)
+    {
+        var (metadata, _, gameRelease) = RequirePlugin(plugin);
+        return await _writer.PrepareAsync(metadata.Path, changes, gameRelease);
+    }
+
+    public Task ReindexPlugin(string plugin)
+    {
+        var (metadata, repository, gameRelease) = RequirePlugin(plugin);
 
         var modKey = ModKey.FromFileName(Path.GetFileName(metadata.Path));
         var modPath = new ModPath(modKey, metadata.Path);
@@ -156,7 +155,21 @@ public sealed class SessionManager : ISessionManager, IDisposable
             repository.UpdateWinners();
         }
 
-        return result;
+        return Task.CompletedTask;
+    }
+
+    private (PluginMetadata Metadata, IRecordRepository Repository, GameRelease GameRelease) RequirePlugin(string plugin)
+    {
+        lock (_lock)
+        {
+            if (_session == null)
+                throw new InvalidOperationException(NoSessionMessage);
+            var meta = _session.Plugins.FirstOrDefault(p =>
+                string.Equals(p.Name, plugin, StringComparison.OrdinalIgnoreCase));
+            if (meta == null)
+                throw new KeyNotFoundException($"Plugin '{plugin}' not found in session.");
+            return (meta, _repository!, _gameRelease);
+        }
     }
 
     public string ReserveFormKey(string plugin)
@@ -164,7 +177,7 @@ public sealed class SessionManager : ISessionManager, IDisposable
         lock (_lock)
         {
             if (_session == null)
-                throw new InvalidOperationException("No session loaded.");
+                throw new InvalidOperationException(NoSessionMessage);
             if (!_nextFormIds.TryGetValue(plugin, out var nextId))
                 throw new ArgumentException($"Plugin '{plugin}' has no reservation counter (not loaded or immutable).", nameof(plugin));
             if (nextId > 0xFFFFFF)
@@ -183,7 +196,7 @@ public sealed class SessionManager : ISessionManager, IDisposable
         lock (_lock)
         {
             if (_session is null)
-                throw new InvalidOperationException("No session loaded.");
+                throw new InvalidOperationException(NoSessionMessage);
             _repository!.SetFilter(sql);
             _session.FilterSql = sql;
         }

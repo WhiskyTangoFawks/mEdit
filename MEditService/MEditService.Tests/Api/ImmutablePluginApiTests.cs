@@ -28,25 +28,17 @@ public sealed class ImmutablePluginApiTests : IClassFixture<LoadedImmutableApiFi
         Assert.True(fo4.GetProperty("isImmutable").GetBoolean());
     }
 
-    [Theory]
-    [InlineData("patch")]
-    [InlineData("save")]
-    public async Task Write_ImmutablePlugin_Returns409(string op)
+    [Fact]
+    public async Task Patch_ImmutablePlugin_Returns409()
     {
         var formKey = Uri.EscapeDataString(_fixture.UserNpcFormKey.ToString());
-        var plugin = Uri.EscapeDataString(ImmutablePluginFixture.ImmutablePluginName);
 
-        var resp = op switch
+        var resp = await _client.PatchAsJsonAsync($"/records/{formKey}", new
         {
-            "patch" => await _client.PatchAsJsonAsync($"/records/{formKey}", new
-            {
-                plugin = ImmutablePluginFixture.ImmutablePluginName,
-                fields = new Dictionary<string, object?> { ["editor_id"] = "Hacked" },
-                source = "user",
-            }),
-            "save" => await _client.PostAsync($"/plugins/{plugin}/save", null),
-            var unknown => throw new InvalidOperationException($"Unknown op: {unknown}")
-        };
+            plugin = ImmutablePluginFixture.ImmutablePluginName,
+            fields = new Dictionary<string, object?> { ["editor_id"] = "Hacked" },
+            source = "user",
+        });
 
         Assert.Equal(HttpStatusCode.Conflict, resp.StatusCode);
     }

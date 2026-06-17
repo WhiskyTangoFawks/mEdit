@@ -210,57 +210,58 @@ public static class ChangeEndpoints
         .ProducesProblem(404)
         .ProducesProblem(409);
 
-        app.MapPost("/plugins/{plugin}/save", async (
-            [FromRoute] string plugin,
+        app.MapPost("/changes/groups/save", async (
+            [FromBody] Guid[] groupIds,
+            PluginSaver saver,
             IPendingChangeService changes,
             ISessionManager session,
             ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger(nameof(ChangeEndpoints));
-            var decodedPlugin = Uri.UnescapeDataString(plugin);
+
+            if (groupIds == null) return Results.Problem("Request body is required.", statusCode: 400);
 
             var s = session.Session;
             if (s == null) return Results.Problem("No session loaded.");
 
-            var metadata = s.Plugins.FirstOrDefault(p =>
-                string.Equals(p.Name, decodedPlugin, StringComparison.OrdinalIgnoreCase));
-            if (metadata == null) return Results.NotFound();
+            foreach (var groupId in groupIds)
+            {
+                var groupChanges = changes.GetChanges(groupId: groupId);
+                foreach (var pluginName in groupChanges.Select(c => c.Plugin).Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    var meta = s.Plugins.FirstOrDefault(p =>
+                        p.Name.Equals(pluginName, StringComparison.OrdinalIgnoreCase));
+                    if (meta == null) return Results.NotFound();
+                    if (meta.IsImmutable)
+                        return Results.Problem($"'{pluginName}' is a base-game plugin and cannot be saved.", statusCode: 409);
+                }
+            }
 
-            if (metadata.IsImmutable)
-                return Results.Problem($"'{decodedPlugin}' is a base-game plugin and cannot be saved.", statusCode: 409);
-
-            var drained = changes.DrainForPlugin(decodedPlugin);
-            if (drained.Changes.Count == 0)
-                return Results.Ok(new SaveResult(string.Empty, [], [], [], []));
-
+            var allResults = new Dictionary<string, SaveResult>();
             try
             {
-                var result = await session.SavePlugin(decodedPlugin, drained.Changes);
-                return Results.Ok(result);
+                foreach (var groupId in groupIds)
+                {
+                    var r = await saver.Save(groupId);
+                    if (r is SaveGroupResult.Saved saved)
+                        foreach (var (k, v) in saved.ByPlugin) allResults[k] = v;
+                }
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to save plugin {Plugin} — re-queuing {Count} changes", decodedPlugin, drained.Changes.Count);
-                foreach (var c in drained.Changes)
-                {
-                    var refsForField = drained.FormRefsByFormKey[c.FormKey]
-                        .Where(r => r.StagedField == c.FieldPath)
-                        .ToList();
-                    changes.Upsert(c.FormKey, c.Plugin, c.RecordType,
-                        new Dictionary<string, JsonElement> { [c.FieldPath] = c.NewValue },
-                        c.Source, c.Description,
-                        new Dictionary<string, JsonElement> { [c.FieldPath] = c.OldValue },
-                        refsForField,
-                        c.ChangeType);
-                }
+                logger.LogError(ex, "Failed to save change groups");
                 return Results.Problem(ex.Message);
             }
+
+            return Results.Ok(allResults);
         })
-        .WithName("SavePlugin")
+        .WithName("SaveGroups")
         .WithTags("Changes")
-        .Produces<SaveResult>()
+        .Produces<Dictionary<string, SaveResult>>()
+        .ProducesProblem(400)
         .ProducesProblem(404)
-        .ProducesProblem(409);
+        .ProducesProblem(409)
+        .ProducesProblem(500);
 
         return app;
     }

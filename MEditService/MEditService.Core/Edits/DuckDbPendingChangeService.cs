@@ -4,9 +4,9 @@ using DuckDB.NET.Data;
 
 namespace MEditService.Core.Edits;
 
-public sealed class DuckDbPendingChangeService : IPendingChangeService, IPendingChangeLifecycle
+public sealed class DuckDbPendingChangeService : IPendingChangeService, IPendingChangeLifecycle, IDisposable
 {
-    private readonly Lock _lock = new();
+    private readonly SemaphoreSlim _sem = new(1, 1);
     private DuckDBConnection? _connection;
 
     public DuckDbPendingChangeService(DuckDBConnection connection) =>
@@ -16,16 +16,19 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
 
     void IPendingChangeLifecycle.OnSessionLoaded(DuckDBConnection connection)
     {
-        lock (_lock)
+        _sem.Wait();
+        try
         {
             _connection = connection;
             EnsureTable(connection);
         }
+        finally { _sem.Release(); }
     }
 
     void IPendingChangeLifecycle.OnSessionUnloaded()
     {
-        lock (_lock)
+        _sem.Wait();
+        try
         {
             if (_connection != null)
             {
@@ -33,6 +36,7 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
                 _connection = null;
             }
         }
+        finally { _sem.Release(); }
     }
 
     internal static void EnsureTable(DuckDBConnection connection)
@@ -111,7 +115,8 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
         string changeType = "field_edit",
         Guid? groupId = null)
     {
-        lock (_lock)
+        _sem.Wait();
+        try
         {
             formRefs ??= [];
             var conn = RequireConnection();
@@ -202,35 +207,42 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
 
             return result;
         }
+        finally { _sem.Release(); }
     }
 
     public IReadOnlyList<PendingChange> GetChanges(string? plugin = null, string? formKey = null, Guid? groupId = null)
     {
-        lock (_lock)
+        _sem.Wait();
+        try
         {
             var conn = RequireConnection();
             var (where, paramValues) = BuildFilter(plugin, formKey, groupId);
-
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"""
-                SELECT id, form_key, plugin, field_path, record_type, old_value, new_value, source, description, changed_at, change_type, group_id
-                FROM pending_changes{where}
-                ORDER BY changed_at
-                """;
-            foreach (var v in paramValues)
-                cmd.Parameters.Add(new DuckDBParameter { Value = v });
-
-            var result = new List<PendingChange>();
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
-                result.Add(ReadChange(reader));
-            return result;
+            return DoSelectChanges(conn, where, paramValues);
         }
+        finally { _sem.Release(); }
+    }
+
+    private static List<PendingChange> DoSelectChanges(DuckDBConnection conn, string where, List<object> paramValues)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT id, form_key, plugin, field_path, record_type, old_value, new_value, source, description, changed_at, change_type, group_id
+            FROM pending_changes{where}
+            ORDER BY changed_at
+            """;
+        foreach (var v in paramValues)
+            cmd.Parameters.Add(new DuckDBParameter { Value = v });
+        var result = new List<PendingChange>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            result.Add(ReadChange(reader));
+        return result;
     }
 
     public Dictionary<string, JsonElement>? GetPendingFields(string formKey, string plugin)
     {
-        lock (_lock)
+        _sem.Wait();
+        try
         {
             var conn = RequireConnection();
             using var cmd = conn.CreateCommand();
@@ -253,11 +265,13 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
             }
             return result.Count == 0 ? null : result;
         }
+        finally { _sem.Release(); }
     }
 
     public IReadOnlyList<(string FormKey, string RecordType)> GetStagedFormKeys(string plugin, string? recordType = null)
     {
-        lock (_lock)
+        _sem.Wait();
+        try
         {
             var conn = RequireConnection();
             using var cmd = conn.CreateCommand();
@@ -271,11 +285,13 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
                 result.Add((reader.GetString(0), reader.GetString(1)));
             return result;
         }
+        finally { _sem.Release(); }
     }
 
     public RevertChangeResult Revert(Guid changeId)
     {
-        lock (_lock)
+        _sem.Wait();
+        try
         {
             var conn = RequireConnection();
             var changeIdStr = changeId.ToString();
@@ -316,11 +332,13 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
             txn.Commit();
             return new RevertChangeResult.Reverted();
         }
+        finally { _sem.Release(); }
     }
 
     public int Revert(string? plugin, string? formKey)
     {
-        lock (_lock)
+        _sem.Wait();
+        try
         {
             var conn = RequireConnection();
             var (where, paramValues) = BuildFilter(plugin, formKey);
@@ -343,6 +361,7 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
             txn.Commit();
             return count;
         }
+        finally { _sem.Release(); }
     }
 
     private static (string Where, List<object> Params) BuildPendingRefFilter(string? plugin, string? formKey)
@@ -357,7 +376,8 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
 
     public DrainResult DrainForPlugin(string plugin)
     {
-        lock (_lock)
+        _sem.Wait();
+        try
         {
             var conn = RequireConnection();
 
@@ -401,11 +421,13 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
             txn.Commit();
             return new DrainResult(drained, refsList.ToLookup(x => x.SourceFormKey, x => x.Ref));
         }
+        finally { _sem.Release(); }
     }
 
     public IReadOnlyList<ChangeGroup> GetChangeGroups()
     {
-        lock (_lock)
+        _sem.Wait();
+        try
         {
             var conn = RequireConnection();
             using var cmd = conn.CreateCommand();
@@ -430,11 +452,13 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
             }
             return result;
         }
+        finally { _sem.Release(); }
     }
 
     public bool RevertGroup(Guid groupId)
     {
-        lock (_lock)
+        _sem.Wait();
+        try
         {
             var conn = RequireConnection();
             var groupIdStr = groupId.ToString();
@@ -478,11 +502,13 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
             txn.Commit();
             return deleted > 0;
         }
+        finally { _sem.Release(); }
     }
 
     public Guid? GetGroupIdForRecord(string formKey, string plugin)
     {
-        lock (_lock)
+        _sem.Wait();
+        try
         {
             var conn = RequireConnection();
             using var cmd = conn.CreateCommand();
@@ -499,11 +525,13 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
             if (!reader.Read()) return null;
             return Guid.Parse(reader.GetString(0));
         }
+        finally { _sem.Release(); }
     }
 
     public string? GetPendingCreateRecordType(string formKey)
     {
-        lock (_lock)
+        _sem.Wait();
+        try
         {
             var conn = RequireConnection();
             using var cmd = conn.CreateCommand();
@@ -518,12 +546,14 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
             if (!reader.Read()) return null;
             return reader.GetString(0);
         }
+        finally { _sem.Release(); }
     }
 
     public Guid? GetCreateGroupIdForAny(IReadOnlyList<string> formKeys)
     {
         if (formKeys.Count == 0) return null;
-        lock (_lock)
+        _sem.Wait();
+        try
         {
             var conn = RequireConnection();
             using var cmd = conn.CreateCommand();
@@ -540,11 +570,13 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
             if (!reader.Read() || reader.IsDBNull(0)) return null;
             return Guid.Parse(reader.GetString(0));
         }
+        finally { _sem.Release(); }
     }
 
     public ChangeGroup StageGroup(string operation, string? description, IReadOnlyList<GroupMember> members)
     {
-        lock (_lock)
+        _sem.Wait();
+        try
         {
             var conn = RequireConnection();
             var groupId = Guid.NewGuid();
@@ -601,7 +633,66 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
             var actualCount = Convert.ToInt32(countCmd.ExecuteScalar()!, System.Globalization.CultureInfo.InvariantCulture);
             return new ChangeGroup(groupId, operation, description, createdAt, actualCount);
         }
+        finally { _sem.Release(); }
     }
+
+    public async Task<SaveGroupResult> ExecuteGroupSaveAsync(
+        Guid groupId,
+        Func<IReadOnlyDictionary<string, IReadOnlyList<PendingChange>>, Task<IReadOnlyDictionary<string, SaveResult>>> writeAll)
+    {
+        await _sem.WaitAsync();
+        try
+        {
+            var conn = RequireConnection();
+            var pending = SelectChangesForGroup(conn, groupId);
+            if (pending.Count == 0) return new SaveGroupResult.NoChanges();
+
+            var byPlugin = pending
+                .GroupBy(c => c.Plugin)
+                .ToDictionary(g => g.Key, g => (IReadOnlyList<PendingChange>)g.ToList());
+
+            await using var txn = await conn.BeginTransactionAsync();
+            DeleteChangesForGroup(conn, groupId);
+
+            var results = await writeAll(byPlugin);
+            await txn.CommitAsync();
+            return new SaveGroupResult.Saved(results);
+        }
+        finally { _sem.Release(); }
+    }
+
+    private static List<PendingChange> SelectChangesForGroup(DuckDBConnection conn, Guid groupId)
+    {
+        var (where, paramValues) = BuildFilter(null, null, groupId);
+        return DoSelectChanges(conn, where, paramValues);
+    }
+
+    private static void DeleteChangesForGroup(DuckDBConnection conn, Guid groupId)
+    {
+        var groupIdStr = groupId.ToString();
+
+        using var delRefs = conn.CreateCommand();
+        delRefs.CommandText = """
+            DELETE FROM pending_form_references
+            WHERE (source_form_key, source_plugin, staged_field) IN (
+                SELECT form_key, plugin, field_path FROM pending_changes WHERE group_id = $1
+            )
+            """;
+        delRefs.Parameters.Add(new DuckDBParameter { Value = groupIdStr });
+        delRefs.ExecuteNonQuery();
+
+        using var delChanges = conn.CreateCommand();
+        delChanges.CommandText = "DELETE FROM pending_changes WHERE group_id = $1";
+        delChanges.Parameters.Add(new DuckDBParameter { Value = groupIdStr });
+        delChanges.ExecuteNonQuery();
+
+        using var delGroup = conn.CreateCommand();
+        delGroup.CommandText = "DELETE FROM change_groups WHERE id = $1";
+        delGroup.Parameters.Add(new DuckDBParameter { Value = groupIdStr });
+        delGroup.ExecuteNonQuery();
+    }
+
+    public void Dispose() => _sem.Dispose();
 
     private static PendingChange ReadChange(DuckDBDataReader reader)
     {

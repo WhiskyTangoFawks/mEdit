@@ -86,7 +86,7 @@ public sealed class ProblemDetailsApiTests : IClassFixture<LoadedNpcApiFixture>
                 fields = new Dictionary<string, object?> { ["editor_id"] = "x" },
             }),
             "copy" => await client.PostAsJsonAsync($"/plugins/{plugin}/records", new { recordType = "npc_" }),
-            _ => await client.PostAsync($"/plugins/{plugin}/save", null),
+            _ => await client.PostAsJsonAsync("/changes/groups/save", Array.Empty<Guid>()),
         };
 
         AssertIsProblemDetails(resp, expectedStatus);

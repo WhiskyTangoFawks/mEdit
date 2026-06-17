@@ -7,32 +7,30 @@ namespace MEditService.Tests.Api;
 public sealed class PluginSaveApiTests : IClassFixture<LoadedNpcApiFixture>
 {
     private readonly HttpClient _client;
-    private readonly TestPluginFixture _fixture;
 
     public PluginSaveApiTests(LoadedNpcApiFixture loaded)
     {
         _client = loaded.Client;
-        _fixture = loaded.Plugin;
     }
 
     [Fact]
-    public async Task Save_AfterPatch_Returns200WithBackupPath()
+    public async Task SaveGroups_AfterCreateRecord_Returns200WithBackupPath()
     {
-        var formKey = Uri.EscapeDataString(_fixture.Npc1FormKey.ToString());
+        var createResp = await _client.PostAsJsonAsync(
+            $"/plugins/{Uri.EscapeDataString(TestPluginFixture.PluginName)}/records",
+            new { recordType = "npc_", source = "user" });
+        Assert.Equal(HttpStatusCode.OK, createResp.StatusCode);
 
-        await _client.PatchAsJsonAsync($"/records/{formKey}", new
-        {
-            plugin = TestPluginFixture.PluginName,
-            fields = new Dictionary<string, object?> { ["aggression"] = "Frenzied" },
-            source = "user",
-        });
+        var created = JsonSerializer.Deserialize<JsonElement>(await createResp.Content.ReadAsStringAsync());
+        var groupId = created.GetProperty("groupId").GetString();
+        Assert.NotNull(groupId);
 
-        var saveResp = await _client.PostAsync(
-            $"/plugins/{Uri.EscapeDataString(TestPluginFixture.PluginName)}/save", null);
+        var saveResp = await _client.PostAsJsonAsync("/changes/groups/save", new[] { groupId });
         Assert.Equal(HttpStatusCode.OK, saveResp.StatusCode);
 
         var body = JsonSerializer.Deserialize<JsonElement>(await saveResp.Content.ReadAsStringAsync());
-        var backupPath = body.GetProperty("backupPath").GetString();
+        var pluginResult = body.GetProperty(TestPluginFixture.PluginName);
+        var backupPath = pluginResult.GetProperty("backupPath").GetString();
         Assert.NotNull(backupPath);
         Assert.True(File.Exists(backupPath));
 

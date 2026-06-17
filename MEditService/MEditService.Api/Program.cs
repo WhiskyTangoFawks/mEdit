@@ -51,6 +51,7 @@ try
     builder.Services.AddSingleton<IPendingChangeService>(sp => sp.GetRequiredService<DuckDbPendingChangeService>());
     builder.Services.AddSingleton<IRecordQueryService, RecordQueryService>();
     builder.Services.AddSingleton<IEditOrchestrator, EditOrchestrator>();
+    builder.Services.AddSingleton<PluginSaver>();
 
     var app = builder.Build();
 

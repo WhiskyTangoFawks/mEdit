@@ -10,6 +10,11 @@ namespace MEditService.Core.Edits;
 
 public interface IPluginWriter
 {
+    Task<PreparedPluginSave> PrepareAsync(
+        string pluginPath,
+        IReadOnlyList<PendingChange> changes,
+        GameRelease gameRelease);
+
     Task<SaveResult> SaveAsync(
         string pluginPath,
         IReadOnlyList<PendingChange> changes,
@@ -31,7 +36,7 @@ public sealed class PluginWriter : IPluginWriter
         _logger = logger;
     }
 
-    public async Task<SaveResult> SaveAsync(
+    public async Task<PreparedPluginSave> PrepareAsync(
         string pluginPath,
         IReadOnlyList<PendingChange> changes,
         GameRelease gameRelease)
@@ -55,15 +60,29 @@ public sealed class PluginWriter : IPluginWriter
         ApplyFieldChanges(byFormKey, mod, schemas, applied, readOnly, notFound);
         ApplyDeleteChanges(byFormKey, mod, schemas, applied, notFound);
 
+        var dir = Path.GetDirectoryName(pluginPath)!;
+        var tmpDir = Path.Combine(dir, ".medit_tmp_" + Path.GetRandomFileName());
+        var tmpPath = Path.Combine(tmpDir, Path.GetFileName(pluginPath));
+        Directory.CreateDirectory(tmpDir);
+
         await mod.BeginWrite
-            .ToPath(pluginPath)
+            .ToPath(tmpPath)
             .WithLoadOrderFromHeaderMasters()
             .WithNoDataFolder()
             .WriteAsync();
 
-        PruneOldBackups(pluginPath);
+        return new PreparedPluginSave(tmpPath, pluginPath, new SaveResult(backupPath, applied, readOnly, notFound, createFailed));
+    }
 
-        return new SaveResult(backupPath, applied, readOnly, notFound, createFailed);
+    public async Task<SaveResult> SaveAsync(
+        string pluginPath,
+        IReadOnlyList<PendingChange> changes,
+        GameRelease gameRelease)
+    {
+        using var prep = await PrepareAsync(pluginPath, changes, gameRelease);
+        prep.Commit();
+        PruneOldBackups(pluginPath);
+        return prep.Result;
     }
 
     public bool IsReadOnly(GameRelease release, string recordType, string fieldPath)

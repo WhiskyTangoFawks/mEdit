@@ -45,6 +45,10 @@ public interface IPendingChangeService
 
     DrainResult DrainForPlugin(string plugin);
 
+    Task<SaveGroupResult> ExecuteGroupSaveAsync(
+        Guid groupId,
+        Func<IReadOnlyDictionary<string, IReadOnlyList<PendingChange>>, Task<IReadOnlyDictionary<string, SaveResult>>> writeAll);
+
     IReadOnlyList<(string FormKey, string RecordType)> GetStagedFormKeys(string plugin, string? recordType = null);
 
     IReadOnlyList<ChangeGroup> GetChangeGroups();

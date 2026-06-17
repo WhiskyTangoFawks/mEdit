@@ -260,6 +260,42 @@ public class SessionManagerTests : IClassFixture<TestPluginFixture>
     }
 
     [Fact]
+    public void ReserveFormKey_AtMaxValidFormId_Succeeds()
+    {
+        var data = new PluginFixtureBuilder("fk-max")
+            .WithPlugin("Max.esp")
+            .Build();
+        using (data)
+        {
+            using var manager = MakeManager();
+            manager.Load(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+
+            var field = typeof(SessionManager)
+                .GetField("_nextFormIds", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+            var dict = (Dictionary<string, uint>)field.GetValue(manager)!;
+            dict["Max.esp"] = 0xFFFFFFu;
+
+            var fk = manager.ReserveFormKey("Max.esp");
+
+            Assert.True(FormKey.TryFactory(fk, out var parsed));
+            Assert.Equal(0xFFFFFFu, parsed.ID);
+        }
+    }
+
+    [Fact]
+    public void ReserveFormKey_SequentialCalls_ReturnConsecutiveIds()
+    {
+        using var manager = MakeLoadedManager();
+
+        var fk1 = manager.ReserveFormKey(TestPluginFixture.PluginName);
+        var fk2 = manager.ReserveFormKey(TestPluginFixture.PluginName);
+
+        Assert.True(FormKey.TryFactory(fk1, out var parsed1));
+        Assert.True(FormKey.TryFactory(fk2, out var parsed2));
+        Assert.Equal(parsed1.ID + 1, parsed2.ID);
+    }
+
+    [Fact]
     public async Task SavePlugin_WithCreateChange_ReloadPicksUpBumpedNextFormID()
     {
         var data = new PluginFixtureBuilder("sm-create-nfid")
