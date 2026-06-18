@@ -264,10 +264,7 @@ public sealed class EditOrchestrator : IEditOrchestrator
     {
         var items = array.EnumerateArray().ToList();
         foreach (var index in indices.Distinct().OrderByDescending(i => i))
-        {
-            if (index < 0 || index >= items.Count) continue;
             items.RemoveAt(index);
-        }
         return JsonSerializer.SerializeToElement(items);
     }
 
