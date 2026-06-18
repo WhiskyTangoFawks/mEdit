@@ -112,7 +112,7 @@ public sealed class DuckDbPendingChangeService : IPendingChangeService, IPending
         string? description,
         Dictionary<string, JsonElement> oldValues,
         IReadOnlyList<PendingFormRef>? formRefs = null,
-        string changeType = "field_edit",
+        string changeType = PendingChangeConstants.FieldEditChangeType,
         Guid? groupId = null)
     {
         _sem.Wait();

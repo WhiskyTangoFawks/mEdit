@@ -19,7 +19,7 @@ public interface IPendingChangeService
         string? description,
         Dictionary<string, JsonElement> oldValues,
         IReadOnlyList<PendingFormRef>? formRefs = null,
-        string changeType = "field_edit",
+        string changeType = PendingChangeConstants.FieldEditChangeType,
         Guid? groupId = null);
 
     /// <summary>

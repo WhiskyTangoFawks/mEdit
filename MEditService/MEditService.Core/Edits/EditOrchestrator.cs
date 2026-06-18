@@ -144,7 +144,7 @@ public sealed class EditOrchestrator : IEditOrchestrator
                 templateFields, source, null,
                 new Dictionary<string, JsonElement>(),
                 templateRefs,
-                changeType: "field_edit",
+                changeType: PendingChangeConstants.FieldEditChangeType,
                 groupId: groupId);
         }
 
