@@ -386,16 +386,16 @@ describe('SessionController.revertGroup', () => {
 describe('SessionController.saveAllGroups', () => {
   beforeEach(() => vi.resetAllMocks());
 
-  it('saves each group sequentially and refreshes both trees', async () => {
+  it('fetches groups from backend, saves each sequentially, and refreshes both trees', async () => {
     const client = {
-      ...makeClient(),
+      GET: vi.fn().mockResolvedValue({ data: [{ id: 'g1' }, { id: 'g2' }], response: { ok: true } }),
       POST: vi.fn().mockResolvedValue({ response: { ok: true, status: 200 } }),
       DELETE: vi.fn(),
-    };
+    } as any;
     const deps = makeDeps({ client });
     const ctrl = new SessionController(deps);
 
-    await ctrl.saveAllGroups([{ id: 'g1' }, { id: 'g2' }]);
+    await ctrl.saveAllGroups();
 
     expect(client.POST).toHaveBeenCalledTimes(2);
     expect(deps.refreshGroupTree).toHaveBeenCalledOnce();
@@ -403,33 +403,52 @@ describe('SessionController.saveAllGroups', () => {
   });
 
   it('shows error naming failed groups when one save fails', async () => {
-    let calls = 0;
+    let postCalls = 0;
     const client = {
-      ...makeClient(),
+      GET: vi.fn().mockResolvedValue({ data: [{ id: 'g1' }, { id: 'g2' }], response: { ok: true } }),
       POST: vi.fn().mockImplementation(() => {
-        calls++;
-        if (calls === 2) return Promise.resolve({ response: { ok: false, status: 500, text: () => Promise.resolve('disk full') } });
+        postCalls++;
+        if (postCalls === 2) return Promise.resolve({ response: { ok: false, status: 500, text: () => Promise.resolve('disk full') } });
         return Promise.resolve({ response: { ok: true, status: 200 } });
       }),
       DELETE: vi.fn(),
-    };
+    } as any;
     const deps = makeDeps({ client });
     const ctrl = new SessionController(deps);
 
-    await ctrl.saveAllGroups([{ id: 'g1' }, { id: 'g2' }]);
+    await ctrl.saveAllGroups();
 
     expect(deps.showError).toHaveBeenCalledWith(expect.stringContaining('g2'));
   });
 
-  it('does nothing with empty group list', async () => {
-    const client = { ...makeClient(), POST: vi.fn(), DELETE: vi.fn() };
+  it('does nothing when backend returns no groups', async () => {
+    const client = {
+      GET: vi.fn().mockResolvedValue({ data: [], response: { ok: true } }),
+      POST: vi.fn(),
+      DELETE: vi.fn(),
+    } as any;
     const deps = makeDeps({ client });
     const ctrl = new SessionController(deps);
 
-    await ctrl.saveAllGroups([]);
+    await ctrl.saveAllGroups();
 
     expect(client.POST).not.toHaveBeenCalled();
     expect(deps.refreshGroupTree).not.toHaveBeenCalled();
+  });
+
+  it('shows error and does not save when GET /change-groups fails', async () => {
+    const client = {
+      GET: vi.fn().mockResolvedValue({ response: { ok: false, status: 500 } }),
+      POST: vi.fn(),
+      DELETE: vi.fn(),
+    } as any;
+    const deps = makeDeps({ client });
+    const ctrl = new SessionController(deps);
+
+    await ctrl.saveAllGroups();
+
+    expect(deps.showError).toHaveBeenCalledOnce();
+    expect(client.POST).not.toHaveBeenCalled();
   });
 });
 
@@ -438,18 +457,32 @@ describe('SessionController.saveAllGroups', () => {
 describe('SessionController.revertAllGroups', () => {
   beforeEach(() => vi.resetAllMocks());
 
-  it('reverts each group sequentially', async () => {
+  it('fetches groups from backend and reverts each sequentially', async () => {
     const client = {
-      ...makeClient(),
+      GET: vi.fn().mockResolvedValue({ data: [{ id: 'g1' }, { id: 'g2' }], response: { ok: true } }),
       DELETE: vi.fn().mockResolvedValue({ response: { ok: true, status: 204 } }),
-    };
+    } as any;
     const deps = makeDeps({ client });
     const ctrl = new SessionController(deps);
 
-    await ctrl.revertAllGroups([{ id: 'g1' }, { id: 'g2' }]);
+    await ctrl.revertAllGroups();
 
     expect(client.DELETE).toHaveBeenCalledTimes(2);
     expect(deps.refreshGroupTree).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows error and does not revert when GET /change-groups fails', async () => {
+    const client = {
+      GET: vi.fn().mockResolvedValue({ response: { ok: false, status: 500 } }),
+      DELETE: vi.fn(),
+    } as any;
+    const deps = makeDeps({ client });
+    const ctrl = new SessionController(deps);
+
+    await ctrl.revertAllGroups();
+
+    expect(deps.showError).toHaveBeenCalledOnce();
+    expect(client.DELETE).not.toHaveBeenCalled();
   });
 });
 

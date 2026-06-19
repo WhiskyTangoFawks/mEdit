@@ -90,17 +90,3 @@ describe('ChangeGroupsTreeProvider.getChildren (root)', () => {
   });
 });
 
-describe('ChangeGroupsTreeProvider.getCachedGroups', () => {
-  it('returns empty array before first refresh', () => {
-    const provider = new ChangeGroupsTreeProvider(makeClient([]), vi.fn());
-    expect(provider.getCachedGroups()).toEqual([]);
-  });
-
-  it('returns fetched groups after getChildren is called', async () => {
-    const groups = [makeGroup('g1', 'delete', null, 1, 1)];
-    const provider = new ChangeGroupsTreeProvider(makeClient(groups), vi.fn());
-    await provider.getChildren();
-    expect(provider.getCachedGroups()).toHaveLength(1);
-    expect(provider.getCachedGroups()[0].id).toBe('g1');
-  });
-});

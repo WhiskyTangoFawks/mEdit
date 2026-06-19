@@ -40,10 +40,6 @@ export class ChangeGroupsTreeProvider implements vscode.TreeDataProvider<ChangeG
     this._onDidChangeTreeData.fire(undefined);
   }
 
-  getCachedGroups() {
-    return this._groups;
-  }
-
   getTreeItem(element: ChangeGroupTreeNode): vscode.TreeItem {
     return element;
   }

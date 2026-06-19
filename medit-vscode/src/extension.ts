@@ -179,12 +179,10 @@ export async function activate(context: vscode.ExtensionContext) {
       await controller.revertGroup(node.groupId);
     }),
     vscode.commands.registerCommand('mEdit.saveAllGroups', async () => {
-      const groups = changeGroupTreeProvider.getCachedGroups().flatMap(g => g.id ? [{ id: g.id }] : []);
-      await controller.saveAllGroups(groups);
+      await controller.saveAllGroups();
     }),
     vscode.commands.registerCommand('mEdit.revertAllGroups', async () => {
-      const groups = changeGroupTreeProvider.getCachedGroups().flatMap(g => g.id ? [{ id: g.id }] : []);
-      await controller.revertAllGroups(groups);
+      await controller.revertAllGroups();
     }),
     vscode.commands.registerCommand('mEdit.copyAsOverrideInto', async (node?: RecordNode) => {
       const formKey = node?.record?.formKey;

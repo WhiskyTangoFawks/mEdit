@@ -120,18 +120,25 @@ export class SessionController {
     this.deps.showError(`mEdit: Revert failed — ${text}`);
   }
 
-  async saveAllGroups(groups: { id: string }[]): Promise<void> {
+  async saveAllGroups(): Promise<void> {
+    const { data, response } = await this.deps.client.GET('/change-groups', {});
+    if (!response.ok || !Array.isArray(data)) {
+      this.deps.showError('mEdit: Failed to fetch change groups');
+      return;
+    }
+    const groups = data.filter(g => g.id);
+    if (groups.length === 0) return;
     const failed: string[] = [];
     let anySucceeded = false;
-    for (const { id } of groups) {
-      const { response } = await this.deps.client.POST('/change-groups/{groupId}/save', {
-        params: { path: { groupId: id } },
+    for (const g of groups) {
+      const { response: r } = await this.deps.client.POST('/change-groups/{groupId}/save', {
+        params: { path: { groupId: g.id! } },
       });
-      if (response.ok || response.status === 404) {
+      if (r.ok || r.status === 404) {
         anySucceeded = true;
       } else {
-        failed.push(id);
-        this.log(`[SessionController] saveAllGroups: group ${id} failed (${response.status})`);
+        failed.push(g.id!);
+        this.log(`[SessionController] saveAllGroups: group ${g.id} failed (${r.status})`);
       }
     }
     if (anySucceeded) {
@@ -143,9 +150,14 @@ export class SessionController {
     }
   }
 
-  async revertAllGroups(groups: { id: string }[]): Promise<void> {
-    for (const { id } of groups) {
-      await this.revertGroup(id);
+  async revertAllGroups(): Promise<void> {
+    const { data, response } = await this.deps.client.GET('/change-groups', {});
+    if (!response.ok || !Array.isArray(data)) {
+      this.deps.showError('mEdit: Failed to fetch change groups');
+      return;
+    }
+    for (const g of data.filter(g => g.id)) {
+      await this.revertGroup(g.id!);
     }
   }
 
