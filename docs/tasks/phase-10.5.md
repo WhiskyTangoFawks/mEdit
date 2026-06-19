@@ -1,6 +1,6 @@
 # Phase 10.5 — Group Save Path
 
-**Status: Not Started**
+**Status: Complete**
 
 *Goal: make ChangeGroups saveable as an atomic unit — draining and writing all plugins the group touches in one operation, with rollback on failure. The per-plugin save endpoint gains a guard so group changes cannot be saved piecemeal.*
 
@@ -49,4 +49,13 @@
 
 ## Proof
 
-*To be filled in on completion. Paste `dotnet test` output, `npm run test:unit` output, and commit hash here.*
+Commit: `bbca39c`
+
+```text
+Passed!  - Failed: 0, Passed: 547, Skipped: 0, Total: 547, Duration: 1 m 57 s
+```
+
+```text
+Test Files  16 passed (16)
+     Tests  181 passed (181)
+```

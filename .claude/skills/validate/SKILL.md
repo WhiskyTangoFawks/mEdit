@@ -83,7 +83,7 @@ Any larger findings requiring architectural refactoring should be prompted to th
 ## Git Workflow
 
 ### Branch
-- [ ] If current branch is `main`, create feature branch: `git checkout -b <short-slug-describing-the-work>`
+- [ ] If current branch is `main`, create feature branch: `git checkout -b <short-slug-describing-the-work>` and commit changes.
 
 This also enables `--since` in the mutation test step — Stryker compares `HEAD` against `main` and scopes automatically to changed files.
 

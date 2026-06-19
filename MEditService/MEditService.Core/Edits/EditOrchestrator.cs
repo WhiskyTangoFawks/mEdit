@@ -228,8 +228,6 @@ public sealed class EditOrchestrator : IEditOrchestrator
             var oldValue = JsonSerializer.SerializeToElement(
                 currentRecord.Fields.First(fv => fv.Metadata.Name == topLevelField).Value);
 
-            // TD-001: a reference inside an array element is removed by dropping that element,
-            // not by nullifying the whole array. Only a scalar field reference is nullified.
             var indices = fieldGroup.Select(t => ParseArrayIndex(t.FieldPath)).Where(i => i is int).Select(i => i!.Value).ToList();
             var newValue = indices.Count > 0 && oldValue.ValueKind == JsonValueKind.Array
                 ? RemoveArrayElements(oldValue, indices)
