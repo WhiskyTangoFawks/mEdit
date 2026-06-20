@@ -53,6 +53,7 @@ public class ArrayChildDiffTests
         var kwdA = kwdDiff.Children.First(c => c.FieldName == "KwdA");
         Assert.NotNull(kwdA.Values["A.esp"]);
         Assert.NotNull(kwdA.Values["B.esp"]);
+        Assert.Equal("B.esp", kwdA.WinnerPlugin); // B.esp has higher load order (1 > 0)
 
         var kwdB = kwdDiff.Children.First(c => c.FieldName == "KwdB");
         Assert.NotNull(kwdB.Values["A.esp"]);
@@ -165,6 +166,131 @@ public class ArrayChildDiffTests
         var rankSubField = secondChild.Children!.First(c => c.FieldName == "rank");
         Assert.True(rankSubField.CellStates.ContainsKey("B.esp"));
         Assert.Equal(ConflictThis.Override, rankSubField.CellStates["B.esp"]);
+    }
+    // ── Struct sub-field edge cases ──────────────────────────────────────────
+
+    [Fact]
+    public void StructField_ArraySubFieldWithNoElementType_EmitsWithNullChildren_DoesNotThrow()
+    {
+        // IsArray=true, ElementType=null → neither BuildArrayChildren branch fires; no crash
+        var subArray = new FieldMetadata("Items", "array", true, [], []);
+        var structMeta = new FieldMetadata("Bounds", "struct", false, [], [],
+            Fields: [new FieldMetadata("X", "int", false, [], []), subArray]);
+        var val = JsonSerializer.Deserialize<JsonElement>("{\"X\": 1, \"Items\": [1,2,3]}");
+
+        var master = MakeRecord("A.esp", 0, false, structMeta, val);
+        var override1 = MakeRecord("B.esp", 1, true, structMeta, val);
+
+        var result = Classify([master, override1]);
+
+        var boundsDiff = result.Diffs.First(d => d.FieldName == "Bounds");
+        Assert.NotNull(boundsDiff.Children);
+        var itemsChild = boundsDiff.Children!.First(c => c.FieldName == "Items");
+        Assert.Null(itemsChild.Children);
+    }
+
+    [Fact]
+    public void StructField_NestedStruct_RecursesIntoSubSubFields()
+    {
+        var innerMeta = new FieldMetadata("Inner", "struct", false, [], [],
+            Fields: [new FieldMetadata("Value", "int", false, [], [])]);
+        var outerMeta = new FieldMetadata("Outer", "struct", false, [], [],
+            Fields: [innerMeta]);
+        var valA = JsonSerializer.Deserialize<JsonElement>("{\"Inner\": {\"Value\": 1}}");
+        var valB = JsonSerializer.Deserialize<JsonElement>("{\"Inner\": {\"Value\": 2}}");
+
+        var master = MakeRecord("A.esp", 0, false, outerMeta, valA);
+        var override1 = MakeRecord("B.esp", 1, true, outerMeta, valB);
+
+        var result = Classify([master, override1]);
+
+        var outerDiff = result.Diffs.First(d => d.FieldName == "Outer");
+        Assert.NotNull(outerDiff.Children);
+        var innerChild = outerDiff.Children!.First(c => c.FieldName == "Inner");
+        Assert.NotNull(innerChild.Children);
+        Assert.Contains(innerChild.Children!, c => c.FieldName == "Value");
+    }
+
+    [Fact]
+    public void StructField_AllSubFieldValuesAbsentFromJson_ReturnsNullChildren()
+    {
+        var structMeta = new FieldMetadata("Bounds", "struct", false, [], [],
+            Fields: [new FieldMetadata("X", "int", false, [], [])]);
+        var emptyStruct = JsonSerializer.Deserialize<JsonElement>("{}");
+
+        var master = MakeRecord("A.esp", 0, false, structMeta, emptyStruct);
+        var override1 = MakeRecord("B.esp", 1, true, structMeta, emptyStruct);
+
+        var result = Classify([master, override1]);
+
+        Assert.Null(result.Diffs.First(d => d.FieldName == "Bounds").Children);
+    }
+
+    // ── Empty array tests ────────────────────────────────────────────────────
+
+    [Fact]
+    public void SortedArray_AllPluginsHaveEmptyArray_ReturnsNullChildren()
+    {
+        var meta = SortedArrayMeta("Keywords");
+        var emptyArray = JsonSerializer.Deserialize<JsonElement>("[]");
+
+        var master = MakeRecord("A.esp", 0, false, meta, emptyArray);
+        var override1 = MakeRecord("B.esp", 1, true, meta, emptyArray);
+
+        var result = Classify([master, override1]);
+
+        Assert.Null(result.Diffs.First(d => d.FieldName == "Keywords").Children);
+    }
+
+    // ── Overflow boundary tests ──────────────────────────────────────────────
+
+    [Fact]
+    public void SortedArray_ExceedingMaxArrayChildCount_ReturnsNullChildren_LogsWarning()
+    {
+        var logLines = new List<string>();
+        using var loggerFactory = LoggerFactory.Create(b =>
+            b.AddProvider(new CollectingLoggerProvider(logLines)));
+        var classifier = new ConflictClassifier(
+            loggerFactory.CreateLogger<ConflictClassifier>());
+
+        var meta = SortedArrayMeta("Keywords");
+        var bigArray = JsonSerializer.Deserialize<JsonElement>(
+            "[" + string.Join(",", Enumerable.Range(0, 501).Select(i => $"\"Kwd{i}\"")) + "]");
+
+        var master = MakeRecord("A.esp", 0, true, meta, bigArray);
+
+        var result = Classify([master], classifier);
+
+        Assert.Null(result.Diffs.First(d => d.FieldName == "Keywords").Children);
+        Assert.Contains(logLines, l => l.Contains("MaxArrayChildCount"));
+    }
+
+    [Fact]
+    public void SortedArray_AtExactlyMaxArrayChildCount_ReturnsChildren()
+    {
+        var meta = SortedArrayMeta("Keywords");
+        var exactly500 = JsonSerializer.Deserialize<JsonElement>(
+            "[" + string.Join(",", Enumerable.Range(0, 500).Select(i => $"\"Kwd{i}\"")) + "]");
+
+        var master = MakeRecord("A.esp", 0, true, meta, exactly500);
+
+        var result = Classify([master]);
+
+        Assert.Equal(500, result.Diffs.First(d => d.FieldName == "Keywords").Children!.Count);
+    }
+
+    [Fact]
+    public void UnsortedArray_AtExactlyMaxArrayChildCount_ReturnsChildren()
+    {
+        var meta = UnsortedArrayMeta("Items");
+        var exactly500 = JsonSerializer.Deserialize<JsonElement>(
+            "[" + string.Join(",", Enumerable.Range(0, 500).Select(i => $"\"{i}\"")) + "]");
+
+        var master = MakeRecord("A.esp", 0, true, meta, exactly500);
+
+        var result = Classify([master]);
+
+        Assert.Equal(500, result.Diffs.First(d => d.FieldName == "Items").Children!.Count);
     }
 }
 

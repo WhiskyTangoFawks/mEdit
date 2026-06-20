@@ -127,7 +127,7 @@ public sealed class ConflictClassifier : IConflictClassifier
                 List<FieldDiff>? children = null;
                 if (meta?.Fields != null)
                     children = BuildStructChildren(meta.Fields, values, masterPlugin, records, _logger);
-                else if (meta?.ElementType != null && meta.IsArray)
+                else if (meta?.ElementType != null)
                     children = BuildArrayChildren(meta.ElementType, values, masterPlugin, records, _logger, MaxArrayChildCount, fieldName);
                 return new FieldDiff(fieldName, values, winner.Plugin, winnerValue, cellStates, children);
             })
@@ -159,7 +159,7 @@ public sealed class ConflictClassifier : IConflictClassifier
                 .MaxBy(r => r.LoadOrderIndex)!;
             var winnerValue = subValues[fieldWinner.Plugin];
             var cellStates = ComputeCellStates(label, subValues, masterPlugin, records, []);
-            var childChildren = elementMeta.Type == "struct" && elementMeta.Fields != null
+            var childChildren = elementMeta.Fields != null
                 ? BuildStructChildren(elementMeta.Fields, subValues, masterPlugin, records, logger)
                 : null;
             return new FieldDiff(label, subValues, fieldWinner.Plugin, winnerValue, cellStates, childChildren);
@@ -252,7 +252,7 @@ public sealed class ConflictClassifier : IConflictClassifier
             List<FieldDiff>? subChildren = null;
             if (subField.IsArray && subField.ElementType != null)
                 subChildren = BuildArrayChildren(subField.ElementType, subValues, masterPlugin, records, logger, MaxArrayChildCount, subField.Name);
-            else if (subField.Fields?.Count > 0)
+            else if (subField.Fields != null)
                 subChildren = BuildStructChildren(subField.Fields, subValues, masterPlugin, records, logger);
 
             var fieldWinner = records
