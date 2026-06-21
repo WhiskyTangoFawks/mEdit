@@ -159,6 +159,63 @@ public sealed class RecordQueryServiceTests : IClassFixture<TestPluginFixture>, 
     }
 
     [Fact]
+    public void GetCompare_RecordIdenticalExceptVmad_ClassifiesAsConflict()
+    {
+        FormKey npcKey = default;
+        var data = new PluginFixtureBuilder("rqs-vmad-conflict")
+            .WithPlugin("Base.esp", mod => npcKey = MakeScriptedNpc(mod, 10))
+            .WithPlugin("Mid.esp", (mod, prev) =>
+                mod.Npcs.GetOrAddAsOverride(prev[0].Npcs.First()).VirtualMachineAdapter = ScriptVmad(20))
+            .WithPlugin("Top.esp", (mod, prev) =>
+                mod.Npcs.GetOrAddAsOverride(prev[0].Npcs.First()).VirtualMachineAdapter = ScriptVmad(30))
+            .Build();
+        using (data)
+        {
+            var reflector = new SchemaReflector();
+            var factory = new DuckDbRecordRepositoryFactory(reflector, new TableDdlBuilder(reflector));
+            using var manager = new SessionManager(factory, new PluginWriter(reflector, NullLogger<PluginWriter>.Instance));
+            manager.Load(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+            var svc = new RecordQueryService(manager, DuckDbTestFactory.MakePendingChangeService(), reflector, new ConflictClassifier());
+
+            var compare = svc.GetCompare(npcKey.ToString());
+
+            Assert.NotNull(compare);
+            // Non-VMAD fields are identical overrides, so only VMAD differs — yet the record is conflicted.
+            Assert.Equal(ConflictAll.Conflict, compare!.ConflictAll);
+            Assert.NotNull(compare.Vmad);
+            var script = Assert.Single(compare.Vmad!.Scripts);
+            var prop = script.Properties.First(p => p.Name == "Power");
+            Assert.Equal("Top.esp", prop.WinnerPlugin);
+        }
+    }
+
+    [Fact]
+    public void GetCompare_NoOverrideHasVmad_VmadIsNull()
+    {
+        var all = _svc.GetRecords(type: "npc_", plugin: null, search: "TestNPC01", limit: 1, offset: 0);
+        var compare = _svc.GetCompare(all.Items[0].FormKey);
+
+        Assert.NotNull(compare);
+        Assert.Null(compare!.Vmad);
+    }
+
+    private static FormKey MakeScriptedNpc(IFallout4Mod mod, int power)
+    {
+        var npc = mod.Npcs.AddNew("ScriptedNPC");
+        npc.VirtualMachineAdapter = ScriptVmad(power);
+        return npc.FormKey;
+    }
+
+    private static VirtualMachineAdapter ScriptVmad(int power)
+    {
+        var vmad = new VirtualMachineAdapter();
+        var script = new ScriptEntry { Name = "S", Flags = ScriptEntry.Flag.Local };
+        script.Properties.Add(new ScriptIntProperty { Name = "Power", Data = power });
+        vmad.Scripts.Add(script);
+        return vmad;
+    }
+
+    [Fact]
     public void GetCompare_UnknownFormKey_ReturnsNull()
     {
         var compare = _svc.GetCompare("FFFFFF:Unknown.esp");
@@ -693,6 +750,9 @@ public sealed class RecordQueryServiceTests : IClassFixture<TestPluginFixture>, 
 
         public IReadOnlyList<RecordDetail> GetAllOverrides(string tableName, string formKey) =>
             inner.GetAllOverrides(tableName, formKey);
+
+        public VmadData? GetVmad(string formKey, string plugin) =>
+            inner.GetVmad(formKey, plugin);
 
         public int CountRecordsForPlugin(string tableName, string plugin) =>
             inner.CountRecordsForPlugin(tableName, plugin);
