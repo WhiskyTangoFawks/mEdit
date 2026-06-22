@@ -1,6 +1,6 @@
 # Phase 13.3 — VMAD Read-Only Display (with conflict coloring)
 
-**Status: Not Started** · Parent: [phase-13](phase-13.md) · Depends on: 13.2 · **Model: Sonnet** *(reuse-heavy React component; backend supplies pre-aligned data, no re-derivation)*
+**Status: Complete** · Parent: [phase-13](phase-13.md) · Depends on: 13.2 · **Model: Sonnet** *(reuse-heavy React component; backend supplies pre-aligned data, no re-derivation)*
 
 *Goal: VMAD appears in the compare grid as a dedicated section below the normal field rows — scripts as sorted rows, properties as sub-rows, struct/array values expandable, **conflict-colored per cell** — following the unified tree model (ADR-0019). Read-only; no edit affordances yet.*
 
@@ -47,4 +47,16 @@ A new `VmadSection` component in `webview/src/`, rendered by [RecordPanel.tsx](.
 
 ## Proof
 
-*To be filled in on completion. Paste `npm run test:unit` output and commit hash.*
+**Commit:** f207c82 (merged to main via merge commit)
+
+**Tests (225 passed, 0 failed):**
+
+```text
+ ✓ webview/src/VmadSection.test.tsx (8 tests)
+ ✓ webview/src/RecordPanel.test.tsx (49 tests)
+ ... 17 other test files ...
+ Test Files  19 passed (19)
+      Tests  225 passed (225)
+```
+
+All 8 acceptance-list tests green. Integration tests (4) green.
