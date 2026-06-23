@@ -17,8 +17,109 @@ interface VmadSectionProps {
   port?: number;
 }
 
+export interface ArrayEditCtx {
+  vmadPath: string;
+  index: number;
+  siblingsByPlugin: Record<string, unknown[]>;
+}
+
 function isContainerKind(kind: VmadKind): kind is 'array' | 'struct' | 'structList' {
   return kind === 'array' || kind === 'struct' || kind === 'structList';
+}
+
+function buildSiblingsByPlugin(children: VmadPropertyDiff[]): Record<string, unknown[]> {
+  const result: Record<string, unknown[]> = {};
+  for (const [i, c] of children.entries()) {
+    for (const [plugin, val] of Object.entries(c.values)) {
+      if (!result[plugin]) result[plugin] = [];
+      result[plugin][i] = val;
+    }
+  }
+  return result;
+}
+
+function defaultElementValue(elementType: string): unknown {
+  if (elementType === 'Bool') return false;
+  if (elementType === 'Float') return 0;
+  if (elementType === 'String') return '';
+  if (elementType === 'Object') return { formKey: '', alias: -1 };
+  return 0; // Int and unknown
+}
+
+interface AddButtonProps {
+  plugin: string;
+  arrayVmadPath: string;
+  currentArr: unknown[];
+  elementType: string;
+  onEdit: OnEdit;
+}
+
+function ArrayAddButton({ plugin, arrayVmadPath, currentArr, elementType, onEdit }: Readonly<AddButtonProps>) {
+  return (
+    <button
+      title="Add element"
+      onClick={() => onEdit(plugin, arrayVmadPath, [...currentArr, defaultElementValue(elementType)])}
+      style={{ background: 'none', border: 'none', cursor: 'pointer', color: fg, fontSize: '14px', padding: '0 4px' }}
+    >+</button>
+  );
+}
+
+interface ArrayElementCellProps {
+  plugin: string;
+  arrayCtx: ArrayEditCtx;
+  onEdit: OnEdit;
+  editor: React.ReactNode;
+}
+
+function ArrayElementCell({ plugin, arrayCtx, onEdit, editor }: Readonly<ArrayElementCellProps>) {
+  const siblings = arrayCtx.siblingsByPlugin[plugin] ?? [];
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      {editor}
+      <button
+        title="Remove element"
+        onClick={() => onEdit(plugin, arrayCtx.vmadPath, siblings.filter((_, j) => j !== arrayCtx.index))}
+        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--vscode-errorForeground, #f88)', fontSize: '12px', padding: 0, lineHeight: 1 }}
+      >×</button>
+    </span>
+  );
+}
+
+type OnEdit = (plugin: string, vmadPath: string, value: unknown) => void;
+
+interface LeafCellCtx {
+  editMode?: boolean;
+  onEdit?: OnEdit;
+  port?: number;
+  onOpen: (fk: string) => void;
+}
+
+function renderLeafCell(
+  p: VmadPropertyDiff,
+  plugin: string,
+  vmadPath: string,
+  arrayCtx: ArrayEditCtx | undefined,
+  ctx: LeafCellCtx,
+  typesDiffer: boolean,
+): React.ReactNode {
+  const { editMode, onEdit, port, onOpen } = ctx;
+  const typeCue = typesDiffer ? `(${p.types[plugin]})` : null;
+  if (!editMode || !onEdit) return leafContent(p, plugin, onOpen, typeCue);
+
+  function commit(v: unknown) {
+    if (arrayCtx) {
+      const siblings = arrayCtx.siblingsByPlugin[plugin] ?? [];
+      const next = [...siblings];
+      next[arrayCtx.index] = v;
+      onEdit(plugin, arrayCtx.vmadPath, next);
+    } else {
+      onEdit(plugin, vmadPath, v);
+    }
+  }
+
+  if (p.kind === 'scalar') return <VmadScalarEditor value={p.values[plugin]} type={scalarType(p)} onCommit={commit} />;
+  if (p.kind === 'object' && port != null) return <VmadObjectEditor value={p.values[plugin]} port={port} onCommit={commit} />;
+  return leafContent(p, plugin, onOpen, typeCue);
 }
 
 function hasPluginData(p: VmadPropertyDiff, plugin: string): boolean {
@@ -267,16 +368,30 @@ export function VmadSection({
     </tr>,
   );
 
-  const pushPropertyRows = (p: VmadPropertyDiff, parentKey: string, depth: number, scriptName: string) => {
+  const leafCtx: LeafCellCtx = { editMode, onEdit, port, onOpen };
+
+  const pushPropertyRows = (
+    p: VmadPropertyDiff,
+    parentKey: string,
+    depth: number,
+    scriptName: string,
+    arrayCtx?: ArrayEditCtx,
+  ) => {
     const key = `${parentKey}>${p.name}`;
     const isContainer = isContainerKind(p.kind);
     const hasChildren = isContainer && (p.children?.length ?? 0) > 0;
     const isExpanded = expanded.has(key);
+    const typesDiffer = Object.values(p.types).some((t, _, a) => t !== a[0]);
+    const leafPath = depth === 1 && !isContainer ? `VMAD\\${scriptName}\\${p.name}` : undefined;
+    const arrayVmadPath = depth === 1 && p.kind === 'array' ? `VMAD\\${scriptName}\\${p.name}` : undefined;
 
-    const typeVals = Object.values(p.types);
-    const typesDiffer = typeVals.length > 1 && typeVals.some(t => t !== typeVals[0]);
-
-    const vmadPath = depth === 1 && !isContainer ? `VMAD\\${scriptName}\\${p.name}` : undefined;
+    // Pre-build siblings so the Add button (on the parent array row) can append a default value.
+    const siblingsByPlugin = (arrayVmadPath && isExpanded)
+      ? buildSiblingsByPlugin(p.children ?? [])
+      : undefined;
+    const elementType = arrayVmadPath && p.children?.[0]
+      ? p.children[0].types[p.children[0].winnerPlugin] ?? 'Int'
+      : 'Int';
 
     rows.push(
       <tr key={key}>
@@ -288,24 +403,32 @@ export function VmadSection({
         </td>
         {valueCells(key, p.cellStates, plugin => {
           if (isContainer) {
-            if (isExpanded) return null;
+            if (isExpanded) {
+              if (editMode && onEdit && siblingsByPlugin && arrayVmadPath) {
+                const currentArr = siblingsByPlugin[plugin] ?? [];
+                return <ArrayAddButton plugin={plugin} arrayVmadPath={arrayVmadPath} currentArr={currentArr} elementType={elementType} onEdit={onEdit} />;
+              }
+              return null;
+            }
             return hasPluginData(p, plugin) ? containerSummary(p) : null;
           }
-          if (editMode && onEdit && vmadPath) {
-            if (p.kind === 'scalar') {
-              const type = scalarType(p);
-              return <VmadScalarEditor value={p.values[plugin]} type={type} onCommit={v => onEdit(plugin, vmadPath, v)} />;
-            }
-            if (p.kind === 'object' && port != null) {
-              return <VmadObjectEditor value={p.values[plugin]} port={port} onCommit={v => onEdit(plugin, vmadPath, v)} />;
-            }
-          }
-          return leafContent(p, plugin, onOpen, typesDiffer ? `(${p.types[plugin]})` : null);
-        }, vmadPath)}
+          const path = arrayCtx ? arrayCtx.vmadPath : leafPath;
+          const typeCue = typesDiffer ? `(${p.types[plugin]})` : null;
+          const editor = path
+            ? renderLeafCell(p, plugin, path, arrayCtx, leafCtx, typesDiffer)
+            : leafContent(p, plugin, onOpen, typeCue);
+          if (arrayCtx && editMode && onEdit)
+            return <ArrayElementCell plugin={plugin} arrayCtx={arrayCtx} onEdit={onEdit} editor={editor} />;
+          return editor;
+        }, arrayVmadPath ?? leafPath)}
       </tr>,
     );
 
-    if (hasChildren && isExpanded) {
+    if (!hasChildren || !isExpanded) return;
+    if (p.kind === 'array' && arrayVmadPath && siblingsByPlugin) {
+      for (const [i, c] of (p.children ?? []).entries())
+        pushPropertyRows(c, key, depth + 1, scriptName, { vmadPath: arrayVmadPath, index: i, siblingsByPlugin });
+    } else {
       for (const c of p.children ?? []) pushPropertyRows(c, key, depth + 1, scriptName);
     }
   };

@@ -289,27 +289,16 @@ public sealed class PluginWriter : IPluginWriter
 
         switch (prop)
         {
-            case ScriptBoolProperty p:
-                p.Data = change.NewValue.GetBoolean();
-                break;
-            case ScriptIntProperty p:
-                p.Data = change.NewValue.GetInt32();
-                break;
-            case ScriptFloatProperty p:
-                p.Data = change.NewValue.GetSingle();
-                break;
-            case ScriptStringProperty p:
-                p.Data = change.NewValue.GetString()!;
-                break;
-            case ScriptObjectProperty p:
-                if (!change.NewValue.TryGetProperty("formKey", out var fkEl) ||
-                    fkEl.GetString() is not string fkStr ||
-                    !FormKey.TryFactory(fkStr, out var newFk) ||
-                    !change.NewValue.TryGetProperty("alias", out var aliasEl))
-                    return ApplyOutcome.NotFound;
-                p.Object.SetTo(newFk);
-                p.Alias = aliasEl.GetInt16();
-                break;
+            case ScriptBoolProperty p: p.Data = change.NewValue.GetBoolean(); break;
+            case ScriptIntProperty p: p.Data = change.NewValue.GetInt32(); break;
+            case ScriptFloatProperty p: p.Data = change.NewValue.GetSingle(); break;
+            case ScriptStringProperty p: p.Data = change.NewValue.GetString()!; break;
+            case ScriptObjectProperty p: return ApplyObjectProperty(p, change.NewValue);
+            case ScriptBoolListProperty p: return RebuildList(p.Data, change.NewValue, el => el.GetBoolean());
+            case ScriptIntListProperty p: return RebuildList(p.Data, change.NewValue, el => el.GetInt32());
+            case ScriptFloatListProperty p: return RebuildList(p.Data, change.NewValue, el => el.GetSingle());
+            case ScriptStringListProperty p: return RebuildList(p.Data, change.NewValue, el => el.GetString()!);
+            case ScriptObjectListProperty p: return ApplyObjectListProperty(p, change.NewValue);
             case ScriptVariableProperty:
             case ScriptVariableListProperty:
                 return ApplyOutcome.ReadOnly;
@@ -317,6 +306,56 @@ public sealed class PluginWriter : IPluginWriter
                 return ApplyOutcome.NotFound;
         }
 
+        return ApplyOutcome.Applied;
+    }
+
+    private static bool TryParseScriptObject(JsonElement el, out FormKey fk, out short alias)
+    {
+        alias = 0;
+        if (!el.TryGetProperty("formKey", out var fkEl) ||
+            fkEl.GetString() is not string fkStr ||
+            !FormKey.TryFactory(fkStr, out fk) ||
+            !el.TryGetProperty("alias", out var aliasEl))
+        {
+            fk = default;
+            return false;
+        }
+        if (aliasEl.ValueKind == JsonValueKind.Null) { fk = default; return false; }
+        alias = aliasEl.GetInt16();
+        return true;
+    }
+
+    private static ApplyOutcome ApplyObjectProperty(ScriptObjectProperty p, JsonElement value)
+    {
+        if (!TryParseScriptObject(value, out var fk, out var alias))
+            return ApplyOutcome.NotFound;
+        p.Object.SetTo(fk);
+        p.Alias = alias;
+        return ApplyOutcome.Applied;
+    }
+
+    private static ApplyOutcome RebuildList<T>(IList<T> list, JsonElement array, Func<JsonElement, T> parse)
+    {
+        if (array.ValueKind != JsonValueKind.Array) return ApplyOutcome.NotFound;
+        list.Clear();
+        foreach (var el in array.EnumerateArray()) list.Add(parse(el));
+        return ApplyOutcome.Applied;
+    }
+
+    private static ApplyOutcome ApplyObjectListProperty(ScriptObjectListProperty p, JsonElement array)
+    {
+        if (array.ValueKind != JsonValueKind.Array) return ApplyOutcome.NotFound;
+        var built = new List<ScriptObjectProperty>();
+        foreach (var el in array.EnumerateArray())
+        {
+            if (!TryParseScriptObject(el, out var elFk, out var alias))
+                return ApplyOutcome.NotFound;
+            var obj = new ScriptObjectProperty { Alias = alias };
+            obj.Object.SetTo(elFk);
+            built.Add(obj);
+        }
+        p.Objects.Clear();
+        foreach (var obj in built) p.Objects.Add(obj);
         return ApplyOutcome.Applied;
     }
 

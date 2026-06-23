@@ -88,7 +88,12 @@ public sealed class EditOrchestrator : IEditOrchestrator
         foreach (var path in vmadFields)
         {
             if (!VmadPath.TryParse(path, out var scriptName, out var propName) ||
-                FindVmadProperty(vmadData, scriptName, propName) is { Value.Type: not ("Bool" or "Int" or "Float" or "String" or "Object") })
+                FindVmadProperty(vmadData, scriptName, propName) is
+                {
+                    Value.Type: not (
+                    "Bool" or "Int" or "Float" or "String" or "Object" or
+                    "ArrayOfBool" or "ArrayOfInt" or "ArrayOfFloat" or "ArrayOfString" or "ArrayOfObject")
+                })
                 readOnlyFields.Add(path);
         }
     }
@@ -109,11 +114,19 @@ public sealed class EditOrchestrator : IEditOrchestrator
             .FirstOrDefault(s => string.Equals(s.Name, scriptName, StringComparison.OrdinalIgnoreCase))
             ?.Properties.FirstOrDefault(p => string.Equals(p.Name, propName, StringComparison.OrdinalIgnoreCase));
 
-    private static JsonElement SerializeVmadOldValue(VmadPropertyValue v) => v.Type switch
+    private static JsonElement SerializeVmadOldValue(VmadPropertyValue v)
     {
-        "Object" => JsonSerializer.SerializeToElement(new { formKey = (string?)v.Value, alias = v.Alias }),
-        _ => JsonSerializer.SerializeToElement(v.Value),
-    };
+        if (v.ListItems != null)
+        {
+            return v.Type == "ArrayOfObject"
+                ? JsonSerializer.SerializeToElement(
+                    v.ListItems.Select(i => new { formKey = (string?)i.Value, alias = i.Alias }))
+                : JsonSerializer.SerializeToElement(v.ListItems.Select(i => i.Value));
+        }
+        return v.Type == "Object"
+            ? JsonSerializer.SerializeToElement(new { formKey = (string?)v.Value, alias = v.Alias })
+            : JsonSerializer.SerializeToElement(v.Value);
+    }
 
     public StageEditResult CopyRecordTo(string formKey, string targetPlugin, string source)
     {
@@ -435,6 +448,17 @@ public sealed class EditOrchestrator : IEditOrchestrator
                     fkEl.GetString() is string fk)
                 {
                     result.Add(new PendingFormRef(fieldPath, fieldPath, fk));
+                }
+                // VMAD ArrayOfObject property: [{ "formKey": "...", "alias": n }, ...]
+                else if (newValue.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var el in newValue.EnumerateArray())
+                    {
+                        if (el.ValueKind == JsonValueKind.Object &&
+                            el.TryGetProperty("formKey", out var elFkEl) &&
+                            elFkEl.GetString() is string elFk)
+                            result.Add(new PendingFormRef(fieldPath, fieldPath, elFk));
+                    }
                 }
             }
             else if (colsByName.TryGetValue(fieldPath, out var col))
