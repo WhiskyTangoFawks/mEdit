@@ -247,6 +247,102 @@ describe('VmadSection', () => {
   });
 });
 
+// ── array edit mode (13.6) ────────────────────────────────────────────────────
+
+function arrayVmad(elementKind: 'scalar' | 'object', values: unknown[]): VmadCompare {
+  return {
+    scripts: [script({
+      name: 'S',
+      properties: [prop({
+        name: 'Items',
+        kind: 'array',
+        types: { 'A.esm': elementKind === 'object' ? 'ArrayOfObject' : 'ArrayOfInt' },
+        winnerPlugin: 'A.esm',
+        children: values.map((v, i) => prop({
+          name: `[${i}]`,
+          kind: elementKind,
+          values: { 'A.esm': v },
+          types: { 'A.esm': elementKind === 'object' ? 'Object' : 'Int' },
+          winnerPlugin: 'A.esm',
+        })),
+      })],
+    })],
+  };
+}
+
+describe('VmadSection array edit mode', () => {
+  it('expanding an ArrayOfInt property in edit mode shows a number input per element', () => {
+    const { container } = renderSection(arrayVmad('scalar', [10, 20]), ['A.esm'], {
+      editMode: true,
+      onEdit: vi.fn(),
+    });
+    toggle('S');
+    toggle('Items');
+
+    const inputs = container.querySelectorAll('input[type="number"]');
+    expect(inputs).toHaveLength(2);
+    expect((inputs[0] as HTMLInputElement).value).toBe('10');
+    expect((inputs[1] as HTMLInputElement).value).toBe('20');
+  });
+
+  it('Add button appends a default element and stages the full new array', () => {
+    const onEdit = vi.fn();
+    renderSection(arrayVmad('scalar', [10, 20]), ['A.esm'], { editMode: true, onEdit });
+    toggle('S');
+    toggle('Items');
+
+    fireEvent.click(screen.getByTitle('Add element'));
+
+    expect(onEdit).toHaveBeenCalledWith('A.esm', String.raw`VMAD\S\Items`, [10, 20, 0]);
+  });
+
+  it('Remove button on an element removes it and stages the remaining array', () => {
+    const onEdit = vi.fn();
+    renderSection(arrayVmad('scalar', [10, 20, 30]), ['A.esm'], { editMode: true, onEdit });
+    toggle('S');
+    toggle('Items');
+
+    fireEvent.click(screen.getAllByTitle('Remove element')[1]);
+
+    expect(onEdit).toHaveBeenCalledWith('A.esm', String.raw`VMAD\S\Items`, [10, 30]);
+  });
+
+  it('pending array change shows on the parent row pending column with revert button', () => {
+    const onRevert = vi.fn();
+    const chg = pendingChange('A.esm', String.raw`VMAD\S\Items`, [10, 20, 0]);
+    renderSection(arrayVmad('scalar', [10, 20]), ['A.esm'], {
+      editMode: true,
+      onRevert,
+      withPendingCol: 'A.esm',
+      pendingChangeMap: { [String.raw`A.esm:VMAD\S\Items`]: chg },
+    });
+    toggle('S');
+
+    // Pending column on the parent array row shows the new array value
+    expect(screen.getByText('[10,20,0]')).toBeInTheDocument();
+    const revertBtn = screen.getByTitle('Revert this change');
+    expect(revertBtn).toBeInTheDocument();
+    fireEvent.click(revertBtn);
+    expect(onRevert).toHaveBeenCalledWith(chg.id);
+  });
+
+  it('editing an element calls onEdit with the full new array as atomic value', () => {
+    const onEdit = vi.fn();
+    const { container } = renderSection(arrayVmad('scalar', [10, 20]), ['A.esm'], {
+      editMode: true,
+      onEdit,
+    });
+    toggle('S');
+    toggle('Items');
+
+    const inputs = container.querySelectorAll('input[type="number"]');
+    fireEvent.change(inputs[0], { target: { value: '99' } });
+    fireEvent.blur(inputs[0]);
+
+    expect(onEdit).toHaveBeenCalledWith('A.esm', String.raw`VMAD\S\Items`, [99, 20]);
+  });
+});
+
 // ── edit mode (13.5) ──────────────────────────────────────────────────────────
 
 const boolVmad = (): VmadCompare => ({
@@ -276,7 +372,7 @@ describe('VmadSection edit mode', () => {
     toggle('MyScript');
 
     fireEvent.click(screen.getByRole('checkbox'));
-    expect(onEdit).toHaveBeenCalledWith('A.esm', 'VMAD\\MyScript\\Enabled', true);
+    expect(onEdit).toHaveBeenCalledWith('A.esm', String.raw`VMAD\MyScript\Enabled`, true);
   });
 
   it('Int property edit stages VMAD path with numeric value', () => {
@@ -300,7 +396,7 @@ describe('VmadSection edit mode', () => {
     fireEvent.change(input, { target: { value: '42' } });
     fireEvent.blur(input);
 
-    expect(onEdit).toHaveBeenCalledWith('A.esm', 'VMAD\\S\\Count', 42);
+    expect(onEdit).toHaveBeenCalledWith('A.esm', String.raw`VMAD\S\Count`, 42);
   });
 
   it('String property edit stages VMAD path with string value', () => {
@@ -324,7 +420,7 @@ describe('VmadSection edit mode', () => {
     fireEvent.change(input, { target: { value: 'new' } });
     fireEvent.blur(input);
 
-    expect(onEdit).toHaveBeenCalledWith('A.esm', 'VMAD\\S\\Name', 'new');
+    expect(onEdit).toHaveBeenCalledWith('A.esm', String.raw`VMAD\S\Name`, 'new');
   });
 
   it('Object property renders FK button and alias input in edit mode', () => {
@@ -368,17 +464,17 @@ describe('VmadSection edit mode', () => {
     fireEvent.change(aliasInput, { target: { value: '5' } });
     fireEvent.blur(aliasInput);
 
-    expect(onEdit).toHaveBeenCalledWith('A.esm', 'VMAD\\S\\Target', { formKey: '000123:Foo.esp', alias: 5 });
+    expect(onEdit).toHaveBeenCalledWith('A.esm', String.raw`VMAD\S\Target`, { formKey: '000123:Foo.esp', alias: 5 });
   });
 
   it('pending VMAD change shows new value and revert button; clicking revert calls onRevert', () => {
     const onRevert = vi.fn();
-    const chg = pendingChange('A.esm', 'VMAD\\MyScript\\Enabled', true);
+    const chg = pendingChange('A.esm', String.raw`VMAD\MyScript\Enabled`, true);
     renderSection(boolVmad(), ['A.esm'], {
       editMode: true,
       onRevert,
       withPendingCol: 'A.esm',
-      pendingChangeMap: { ['A.esm:VMAD\\MyScript\\Enabled']: chg },
+      pendingChangeMap: { [String.raw`A.esm:VMAD\MyScript\Enabled`]: chg },
     });
     toggle('MyScript');
 
