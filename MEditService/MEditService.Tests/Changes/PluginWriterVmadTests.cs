@@ -1050,6 +1050,23 @@ public class PluginWriterVmadTests
     }
 
     [Fact]
+    public async Task SaveAsync_VmadRemoveProperty_FirstProperty_Removed()
+    {
+        // "IsActive" is the first property (index 0) — exercises the RemoveByName loop's lower bound.
+        var (path, npcKey, _, _, fixture) = BuildFixture("vmad-remove-first");
+        using var _ = fixture;
+        var writer = new PluginWriter(_reflector, NullLogger<PluginWriter>.Instance);
+
+        var result = await writer.SaveAsync(path,
+            [MakeStructOp(npcKey, @"VMAD\DefaultScript\IsActive", """{"op":"remove_property"}""")], GameRelease.Fallout4);
+
+        Assert.Contains(@"VMAD\DefaultScript\IsActive", result.Applied);
+        var props = ReloadNpc(path, npcKey).VirtualMachineAdapter!.Scripts
+            .First(s => s.Name == "DefaultScript").Properties;
+        Assert.DoesNotContain(props, p => p.Name == "IsActive");
+    }
+
+    [Fact]
     public async Task SaveAsync_VmadAddProperty_String_WritesValue()
     {
         var (path, npcKey, _, _, fixture) = BuildFixture("vmad-addprop-string");

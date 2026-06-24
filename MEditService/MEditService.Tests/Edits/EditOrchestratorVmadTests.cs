@@ -513,6 +513,39 @@ public sealed class EditOrchestratorVmadTests
     }
 
     [Fact]
+    public void StageEdit_VmadAddProperty_ScriptAmongOthers_Staged()
+    {
+        // Two scripts; add_property targets one of them. Guards against an Any()->All() regression
+        // in the "script exists" check (All would be false when a sibling script doesn't match).
+        FormKey npcFk = default;
+        using var data = new PluginFixtureBuilder("eo-vmad-addprop-multi")
+            .WithPlugin("TestPlugin.esp", mod =>
+            {
+                var npc = mod.Npcs.AddNew("ScriptedNpc");
+                npcFk = npc.FormKey;
+                var vmad = new VirtualMachineAdapter();
+                vmad.Scripts.Add(new ScriptEntry { Name = "ScriptA", Flags = ScriptEntry.Flag.Local });
+                vmad.Scripts.Add(new ScriptEntry { Name = "ScriptB", Flags = ScriptEntry.Flag.Local });
+                npc.VirtualMachineAdapter = vmad;
+            })
+            .Build();
+
+        var (orchestrator, manager, _) = MakeOrchestrator();
+        using (manager)
+        {
+            manager.Load(data.DataFolder, data.PluginsTxtPath, GameRelease.Fallout4);
+            var fields = new Dictionary<string, JsonElement>
+            {
+                [@"VMAD\ScriptA\Alpha"] = J("""{"op":"add_property","type":"Int","name":"Alpha","flags":"Edited","value":1}""")
+            };
+
+            var result = orchestrator.StageEdit(npcFk.ToString(), "TestPlugin.esp", fields, "user", null, "vmad_struct_op");
+
+            Assert.IsType<StageEditResult.Staged>(result);
+        }
+    }
+
+    [Fact]
     public void StageEdit_VmadAddProperty_UnknownScript_ReturnsRecordNotFound()
     {
         FormKey npcFk = default, targetFk = default;
