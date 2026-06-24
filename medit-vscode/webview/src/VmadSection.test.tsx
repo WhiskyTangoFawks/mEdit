@@ -62,6 +62,7 @@ type RenderOpts = {
   editMode?: boolean;
   onEdit?: ReturnType<typeof vi.fn>;
   onRevert?: ReturnType<typeof vi.fn>;
+  onStructOp?: ReturnType<typeof vi.fn>;
   pendingChangeMap?: Record<string, PendingChange>;
   withPendingCol?: string; // plugin to add a pending column for
 };
@@ -82,6 +83,7 @@ function renderSection(vmad: VmadCompare | null, plugins: string[], opts: Render
           editMode={opts.editMode}
           onEdit={opts.onEdit}
           onRevert={opts.onRevert}
+          onStructOp={opts.onStructOp}
           pendingChangeMap={opts.pendingChangeMap}
           port={5172}
         />
@@ -693,5 +695,101 @@ describe('VmadSection edit mode', () => {
     toggle('S');
 
     expect(container.querySelectorAll('input, select, textarea')).toHaveLength(0);
+  });
+
+  // ── structural ops (13.8.1) ────────────────────────────────────────────────
+
+  it('add-property control opens a dialog that stages an add_property op', () => {
+    const onStructOp = vi.fn();
+    const vmad: VmadCompare = { scripts: [script({ name: 'S', flags: { 'A.esm': 'Local' } })] };
+    renderSection(vmad, ['A.esm'], { editMode: true, onStructOp });
+
+    fireEvent.click(screen.getByTitle('Add property'));
+
+    fireEvent.change(screen.getByLabelText('New property name'), { target: { value: 'Alpha' } });
+    fireEvent.change(screen.getByLabelText('New property type'), { target: { value: 'Int' } });
+    fireEvent.change(screen.getByLabelText('New property value'), { target: { value: '7' } });
+    fireEvent.click(screen.getByText('Add'));
+
+    expect(onStructOp).toHaveBeenCalledWith(
+      'A.esm',
+      String.raw`VMAD\S\Alpha`,
+      { op: 'add_property', type: 'Int', name: 'Alpha', flags: 'Edited', value: 7 },
+    );
+  });
+
+  it('remove-property control stages a remove_property op', () => {
+    const onStructOp = vi.fn();
+    const vmad: VmadCompare = {
+      scripts: [script({
+        name: 'S',
+        properties: [prop({ name: 'IsActive', kind: 'scalar', values: { 'A.esm': true }, types: { 'A.esm': 'Bool' } })],
+      })],
+    };
+    renderSection(vmad, ['A.esm'], { editMode: true, onStructOp, onEdit: vi.fn() });
+    toggle('S');
+
+    fireEvent.click(screen.getByTitle('Remove property'));
+
+    expect(onStructOp).toHaveBeenCalledWith('A.esm', String.raw`VMAD\S\IsActive`, { op: 'remove_property' });
+  });
+
+  it('a pending remove_property renders the property as removed', () => {
+    const chg = pendingChange('A.esm', String.raw`VMAD\S\IsActive`, { op: 'remove_property' });
+    const vmad: VmadCompare = {
+      scripts: [script({
+        name: 'S',
+        properties: [prop({ name: 'IsActive', kind: 'scalar', values: { 'A.esm': true }, types: { 'A.esm': 'Bool' } })],
+      })],
+    };
+    renderSection(vmad, ['A.esm'], {
+      withPendingCol: 'A.esm',
+      pendingChangeMap: { [`A.esm:${chg.fieldPath}`]: chg },
+      onRevert: vi.fn(),
+    });
+    toggle('S');
+
+    expect(screen.getByText('removed')).toBeInTheDocument();
+  });
+
+  it('a pending add_property renders as a new added row', () => {
+    const chg = pendingChange('A.esm', String.raw`VMAD\S\NewProp`, {
+      op: 'add_property', type: 'Int', name: 'NewProp', flags: 'Edited', value: 42,
+    });
+    const vmad: VmadCompare = { scripts: [script({ name: 'S', flags: { 'A.esm': 'Local' } })] };
+    renderSection(vmad, ['A.esm'], {
+      withPendingCol: 'A.esm',
+      pendingChangeMap: { [`A.esm:${chg.fieldPath}`]: chg },
+      onRevert: vi.fn(),
+    });
+    toggle('S');
+
+    expect(screen.getByText('NewProp')).toBeInTheDocument();
+    expect(screen.getByText('42')).toBeInTheDocument();
+  });
+
+  it('editing a pending-added property re-issues add_property with the new value', () => {
+    const onStructOp = vi.fn();
+    const chg = pendingChange('A.esm', String.raw`VMAD\S\NewProp`, {
+      op: 'add_property', type: 'Int', name: 'NewProp', flags: 'Edited', value: 42,
+    });
+    const vmad: VmadCompare = { scripts: [script({ name: 'S', flags: { 'A.esm': 'Local' } })] };
+    renderSection(vmad, ['A.esm'], {
+      editMode: true,
+      withPendingCol: 'A.esm',
+      pendingChangeMap: { [`A.esm:${chg.fieldPath}`]: chg },
+      onStructOp,
+    });
+    toggle('S');
+
+    const input = screen.getByLabelText('Added value for NewProp');
+    fireEvent.change(input, { target: { value: '99' } });
+    fireEvent.blur(input);
+
+    expect(onStructOp).toHaveBeenCalledWith(
+      'A.esm',
+      String.raw`VMAD\S\NewProp`,
+      { op: 'add_property', type: 'Int', name: 'NewProp', flags: 'Edited', value: 99 },
+    );
   });
 });

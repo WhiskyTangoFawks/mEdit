@@ -1,68 +1,47 @@
 # Phase 13.8 — VMAD Structural Editing
 
-**Status: Not Started** · Parent: [phase-13](phase-13.md) · Depends on: 13.5 · **Model: Opus** *(largest surface area + open design decisions: change-type model, last-script removal, pending-add/value-edit merge, xEdit parity)*
+**Status: Not Started** · Parent: [phase-13](phase-13.md) · Depends on: 13.5 · **Model: Opus**
 
 *Goal: TES5Edit-parity structural operations on VMAD — add/remove a property on a script, add/remove a whole script (including attaching a script to a record that has none), change a property's type, and edit script/property flags.*
 
-xEdit allows all of these (`wbCanAddScriptProperties`, sorted Scripts/Properties arrays, `wbScriptPropertyTypeAfterSet` for type changes). This subphase closes the gap to parity. Full stack.
+Phases 13.4–13.7 made VMAD **values** editable; the tree shape stayed frozen. xEdit allows all structural ops (`wbCanAddScriptProperties`, sorted Scripts/Properties arrays, `wbScriptPropertyTypeAfterSet` for type changes). This subphase closes the gap to parity. Broken into four full-stack sub-phases developed TDD-first.
 
 ---
 
-## Operations & change types
+## Sub-phases
 
-These are not plain value edits — they add/remove tree nodes or change a property's type (which changes its value shape). Introduce VMAD-specific change semantics rather than overloading `field_edit`.
+| Phase | Goal | Depends on | Model |
+| ----- | ---- | ---------- | ----- |
+| [13.8.1](phase-13.8.1.md) | **Foundation + add/remove property** — `vmad_struct_op` change type, PATCH/StageEdit threading, writer dispatch + sorted insertion, form-refs for added Object props; frontend add-property dialog + remove control + pending added/removed rendering | 13.5 | Opus |
+| [13.8.2](phase-13.8.2.md) | **Add/remove script** — `add_script` (create adapter when absent, defaults 6/2), `remove_script` (keep empty adapter); section-level "Add script" + per-script "Remove script" controls | 13.8.1 | Opus |
+| [13.8.3](phase-13.8.3.md) | **Change property type** — `set_type` replaces the property with a default-valued property of the target type, preserving Name/Flags; frontend type dropdown with value-reset warning | 13.8.1 | Sonnet |
+| [13.8.4](phase-13.8.4.md) | **Set flags** — `set_flags` for property (Edited/Removed) and script (Local/Inherited/Removed/InheritedAndRemoved); frontend flag controls | 13.8.1 | Sonnet |
 
-- [ ] Define VMAD structural change types (constants in `PendingChangeConstants`), e.g. `vmad_add_property`, `vmad_remove_property`, `vmad_add_script`, `vmad_remove_script`, `vmad_set_type`, `vmad_set_flags`. Decide whether to model these as distinct `ChangeType`s or as a single `vmad_struct_op` with an operation discriminator in the payload — pick one and document it. (A single op type with a JSON-encoded operation keeps `PendingChange` plumbing simple; distinct types make grouping/validation more explicit. Recommend: single `vmad_struct_op` with `{ op, ... }` payload.)
-- [ ] Field path still identifies the target: `VMAD\<ScriptName>` for script-level ops, `VMAD\<ScriptName>\<PropertyName>` for property-level ops.
+13.8.1 lands the shared `vmad_struct_op` foundation. 13.8.2/3/4 have no ordering between them once 13.8.1 lands, but they touch overlapping files (`PluginWriter`, `VmadSection.tsx`) — coordinate merges as 13.6/13.7 did.
+
+---
+
+## Shared decisions (apply across all sub-phases)
+
+- **Single change type `vmad_struct_op`** (not one type per op), with a JSON op payload `{ op, ... }`. Keeps `PendingChange`/`Upsert`/save-dispatch plumbing simple; the `op` discriminator does the routing.
+- **Field path:** `VMAD\<ScriptName>` for script-level ops, `VMAD\<ScriptName>\<PropertyName>` for property-level ops. `VmadPath.TryParse` rejects a missing property segment, so script-level ops parse the script name directly via the prefix rather than `TryParse`.
+- **Sorted on write:** after any add, sort `script.Properties` by `Name` and `vmad.Scripts` by `Name` using the same `OrdinalIgnoreCase` comparer the lookups use. Re-sorting an already-sorted list is a no-op, so untouched records stay byte-stable.
+- **Last-script removal keeps an empty adapter** (don't null `VirtualMachineAdapter`) — matches xEdit's `wbArrayS` behavior.
+- **New adapter defaults** (add-script onto a record with no VMAD): `Version = 6`, `ObjectFormat = 2` — Mutagen `AVirtualMachineAdapter.VersionDefault`/`ObjectFormatDefault` and xEdit FO4 defaults.
+- **set_type resets the value** to the new type's default (mirrors xEdit `wbScriptPropertyTypeAfterSet`); `Name` and `Flags` preserved.
+- **Pending-add + value-edit merge:** an add op carries the property's full initial value. A later value tweak to a pending-added property **re-issues the same `add_property` op** with the updated value. Because `Upsert` keys on `(form_key, plugin, field_path)`, this overwrites the pending op in place — no separate `field_edit`, no backend merge logic. The frontend decides this by checking whether a pending `vmad_struct_op` add exists for the path.
 
 ### Operation payloads
 
-- **Add property**: `{ op: "add_property", type, name, flags, value }` — value per the type's payload shape (13.4/13.6/13.7). New property must keep the script's Properties array sorted by name on write.
+- **Add property**: `{ op: "add_property", type, name, flags, value }` — `value` per the type's payload shape (13.4/13.6/13.7).
 - **Remove property**: `{ op: "remove_property" }`.
-- **Add script**: `{ op: "add_script", name, flags, properties: [] }` — attaches a VirtualMachineAdapter to the record if absent (create the adapter with correct Version/ObjectFormat defaults — verify FO4 defaults, ObjectFormat 2).
+- **Add script**: `{ op: "add_script", name, flags, properties: [] }`.
 - **Remove script**: `{ op: "remove_script" }`.
-- **Change property type**: `{ op: "set_type", type }` — replaces the property with a new property of the target type and a default value for that type (mirror `wbScriptPropertyTypeAfterSet` behavior: changing type resets the value).
-- **Set flags**: `{ op: "set_flags", flags }` for property (Edited/Removed) or script (Local/Inherited/Removed/Inherited and Removed).
-
-## Backend apply — `PluginWriter`
-
-- [ ] Add a `vmad_struct_op` branch alongside `ApplyVmadField`. Resolve/create the `VirtualMachineAdapter`, find/create/remove the `ScriptEntry` or `ScriptProperty`, and apply the op.
-- [ ] Maintain sort order: Scripts sorted by `ScriptName`, Properties sorted by `propertyName` (xEdit stores them sorted; match so diffs stay stable).
-- [ ] Removing the last script: decide whether to leave an empty adapter or null out `VirtualMachineAdapter`. Match xEdit behavior (verify) — likely keep the adapter with an empty Scripts list unless the record had none originally.
-- [ ] `set_type` constructs the new concrete `Script*Property` with a type-appropriate default and preserves `Name`/`Flags`.
-- [ ] Adding/removing Object properties updates `form_references`.
-
-## Frontend
-
-- [ ] Script row: in edit mode, "Add property" control (opens a small dialog — reuse `NewStructElementDialog` pattern — to pick name + type + initial value) and "Remove script" control.
-- [ ] Section level: "Add script" control (name + flags).
-- [ ] Property row: "Remove property" control; a type dropdown to change type (warns that the value resets); flags control.
-- [ ] Each control stages the corresponding `vmad_struct_op` pending change. Pending display marks added/removed/retyped rows distinctly (added = new row in pending column, removed = struck-through / marked).
-- [ ] Revert removes the structural pending change.
-
-> Interaction with value edits: a script/property that is pending-added can also have pending value edits. Decide ordering/merge (simplest: a pending-added property carries its full value in the add op; subsequent value tweaks update that same pending op rather than creating a separate `field_edit`). Document the chosen rule.
-
----
-
-## Tests
-
-Backend (`dotnet test`):
-- [ ] Add a property to an existing script → written plugin has the new property, array stays sorted.
-- [ ] Remove a property → gone from written plugin.
-- [ ] Add a script to a record with no VMAD → adapter created, script present, ObjectFormat correct.
-- [ ] Remove a script → gone; remaining scripts intact.
-- [ ] Change a property's type → written property has new type + default value.
-- [ ] Set script/property flags → written flags match.
-- [ ] Add/remove Object property updates `form_references`.
-
-Frontend (`npm run test:unit`):
-- [ ] Add-property dialog stages a `vmad_struct_op` add with the chosen type/value.
-- [ ] Remove-property / add-script / remove-script controls stage the right ops.
-- [ ] Type-change control stages `set_type` and reflects the reset value.
-- [ ] Revert clears a structural pending change.
+- **Change property type**: `{ op: "set_type", type }`.
+- **Set flags**: `{ op: "set_flags", flags }`.
 
 ---
 
 ## Proof
 
-*To be filled in on completion. Paste `dotnet test` + `npm run test:unit` output and commit hash.*
+*Each sub-phase carries its own Proof. This page is the index only.*

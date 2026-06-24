@@ -6,6 +6,14 @@ import { baseCell, headerCell, toggleBtnStyle, getCellStyle, mono, fg } from './
 import { FormKeyLink } from './FormKeyLink';
 import { FormKeyPicker } from './FormKeyPicker';
 
+// A VMAD structural operation payload (phase 13.8). The `op` discriminator routes the change.
+export interface StructOp {
+  op: string;
+  [k: string]: unknown;
+}
+
+type OnStructOp = (plugin: string, vmadPath: string, op: StructOp) => void;
+
 interface VmadSectionProps {
   vmad: VmadCompare | null | undefined;
   columns: Column[];
@@ -14,7 +22,45 @@ interface VmadSectionProps {
   pendingChangeMap?: Record<string, PendingChange>;
   onEdit?: (plugin: string, vmadPath: string, value: unknown) => void;
   onRevert?: (changeId: string) => void;
+  onStructOp?: OnStructOp;
   port?: number;
+}
+
+// VMAD property types that can be added (everything except Variable / ArrayOfVariable).
+const ADDABLE_TYPES = [
+  'Bool', 'Int', 'Float', 'String', 'Object',
+  'ArrayOfBool', 'ArrayOfInt', 'ArrayOfFloat', 'ArrayOfString', 'ArrayOfObject',
+  'Struct', 'ArrayOfStruct',
+] as const;
+
+function defaultOpValue(type: string): unknown {
+  switch (type) {
+    case 'Bool': return false;
+    case 'Int': case 'Float': return 0;
+    case 'String': return '';
+    case 'Object': return { formKey: '', alias: -1 };
+    default: return []; // arrays / struct / structList start empty
+  }
+}
+
+// Scalar editor kind for a VMAD type string, or null for non-scalar types.
+function opScalarKind(type: string): 'bool' | 'int' | 'float' | 'string' | null {
+  if (type === 'Bool') return 'bool';
+  if (type === 'Int') return 'int';
+  if (type === 'Float') return 'float';
+  if (type === 'String') return 'string';
+  return null;
+}
+
+function isStructOp(v: unknown): v is StructOp {
+  return typeof v === 'object' && v !== null && typeof (v as { op?: unknown }).op === 'string';
+}
+
+// VMAD\Script\Prop → { script, prop }; null for malformed / script-level paths.
+function parseVmadPath(path: string): { script: string; prop: string } | null {
+  const parts = path.split('\\');
+  if (parts.length < 3 || parts[0] !== 'VMAD') return null;
+  return { script: parts[1], prop: parts.slice(2).join('\\') };
 }
 
 export interface ArrayEditCtx {
@@ -356,20 +402,17 @@ function leafContent(
 // ── Edit widgets ──────────────────────────────────────────────────────────────
 
 function scalarType(p: VmadPropertyDiff): 'bool' | 'int' | 'float' | 'string' {
-  const t = p.types[p.winnerPlugin] ?? '';
-  if (t === 'Bool') return 'bool';
-  if (t === 'Int') return 'int';
-  if (t === 'Float') return 'float';
-  return 'string';
+  return opScalarKind(p.types[p.winnerPlugin] ?? '') ?? 'string';
 }
 
 interface VmadScalarEditorProps {
   value: unknown;
   type: 'bool' | 'int' | 'float' | 'string';
   onCommit: (v: unknown) => void;
+  ariaLabel?: string;
 }
 
-function VmadScalarEditor({ value, type, onCommit }: Readonly<VmadScalarEditorProps>) {
+function VmadScalarEditor({ value, type, onCommit, ariaLabel }: Readonly<VmadScalarEditorProps>) {
   const [draft, setDraft] = useState(() => toStr(value));
   const [prevValue, setPrevValue] = useState(value);
   if (prevValue !== value) {
@@ -381,6 +424,7 @@ function VmadScalarEditor({ value, type, onCommit }: Readonly<VmadScalarEditorPr
     return (
       <input
         type="checkbox"
+        aria-label={ariaLabel}
         checked={draft === 'true'}
         onChange={e => { setDraft(String(e.target.checked)); onCommit(e.target.checked); }}
       />
@@ -407,6 +451,7 @@ function VmadScalarEditor({ value, type, onCommit }: Readonly<VmadScalarEditorPr
   return (
     <input
       type={type === 'int' || type === 'float' ? 'number' : 'text'}
+      aria-label={ariaLabel}
       value={draft}
       onChange={e => setDraft(e.target.value)}
       onBlur={() => onCommit(coerce())}
@@ -477,11 +522,156 @@ function VmadObjectEditor({ value, port, onCommit }: Readonly<VmadObjectEditorPr
   );
 }
 
+// ── structural ops (13.8): add / remove property ───────────────────────────────
+
+const structBtnStyle: React.CSSProperties = {
+  ...iconBtnStyle, fontSize: '14px', padding: '0 4px', color: fg,
+};
+
+function AddPropertyDialog({ port, onConfirm, onCancel }: Readonly<{
+  port?: number;
+  onConfirm: (v: { name: string; type: string; value: unknown }) => void;
+  onCancel: () => void;
+}>) {
+  const [name, setName] = useState('');
+  const [type, setType] = useState<string>('Int');
+  const [value, setValue] = useState<unknown>(() => defaultOpValue('Int'));
+  const [picking, setPicking] = useState(false);
+
+  function changeType(t: string) { setType(t); setValue(defaultOpValue(t)); }
+
+  const kind = opScalarKind(type);
+  const inputStyle: React.CSSProperties = {
+    fontFamily: mono, fontSize: '12px',
+    background: 'var(--vscode-input-background, #3c3c3c)', color: fg,
+    border: '1px solid var(--vscode-input-border, #555)', padding: '2px 6px',
+  };
+
+  function valueControl(): React.ReactNode {
+    if (kind === 'bool') {
+      return <input type="checkbox" aria-label="New property value"
+        checked={value === true} onChange={e => setValue(e.target.checked)} />;
+    }
+    if (kind != null) {
+      return (
+        <input
+          type={kind === 'int' || kind === 'float' ? 'number' : 'text'}
+          aria-label="New property value"
+          style={inputStyle}
+          onChange={e => {
+            const s = e.target.value;
+            if (kind === 'int') { const n = Number.parseInt(s, 10); setValue(Number.isNaN(n) ? 0 : n); return; }
+            if (kind === 'float') { const n = Number.parseFloat(s); setValue(Number.isNaN(n) ? 0 : n); return; }
+            setValue(s);
+          }}
+        />
+      );
+    }
+    if (type === 'Object' && port != null) {
+      const fk = (value as { formKey?: string }).formKey ?? '';
+      if (picking) {
+        return (
+          <FormKeyPicker port={port} validTypes={[]}
+            onSelect={f => { setValue({ formKey: f, alias: -1 }); setPicking(false); }}
+            onClose={() => setPicking(false)} />
+        );
+      }
+      return <button aria-label="New property value" style={inputStyle} onClick={() => setPicking(true)}>
+        {fk || <span style={{ opacity: 0.5 }}>— click to pick</span>}
+      </button>;
+    }
+    return <span style={{ opacity: 0.5 }}>(empty)</span>;
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.4)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
+      <div style={{ background: 'var(--vscode-editor-background, #1e1e1e)', border: '1px solid var(--vscode-editorGroup-border, #444)', padding: 12, minWidth: 280 }}>
+        <div style={{ fontFamily: mono, fontSize: '12px', marginBottom: 8 }}>Add property</div>
+        <table><tbody>
+          <tr><td style={{ paddingRight: 6, opacity: 0.7 }}>Name</td>
+            <td><input aria-label="New property name" style={inputStyle} value={name} onChange={e => setName(e.target.value)} /></td></tr>
+          <tr><td style={{ paddingRight: 6, opacity: 0.7 }}>Type</td>
+            <td><select aria-label="New property type" style={inputStyle} value={type} onChange={e => changeType(e.target.value)}>
+              {ADDABLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            </select></td></tr>
+          <tr><td style={{ paddingRight: 6, opacity: 0.7 }}>Value</td><td>{valueControl()}</td></tr>
+        </tbody></table>
+        <div style={{ marginTop: 10, display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
+          <button onClick={onCancel} style={{ fontSize: '11px', padding: '2px 8px', cursor: 'pointer' }}>Cancel</button>
+          <button
+            onClick={() => onConfirm({ name, type, value })}
+            disabled={name.trim() === ''}
+            style={{ fontSize: '11px', padding: '2px 8px', cursor: 'pointer', background: 'var(--vscode-button-background, #0e639c)', color: 'var(--vscode-button-foreground, #fff)', border: 'none' }}
+          >Add</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AddPropertyButton({ plugin, scriptName, onStructOp, port }: Readonly<{
+  plugin: string; scriptName: string; onStructOp: OnStructOp; port?: number;
+}>) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button title="Add property" onClick={() => setOpen(true)} style={structBtnStyle}>+ prop</button>
+      {open && (
+        <AddPropertyDialog
+          port={port}
+          onCancel={() => setOpen(false)}
+          onConfirm={({ name, type, value }) => {
+            setOpen(false);
+            onStructOp(plugin, `VMAD\\${scriptName}\\${name}`,
+              { op: 'add_property', type, name, flags: 'Edited', value });
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function RemovePropertyButton({ plugin, scriptName, propName, onStructOp }: Readonly<{
+  plugin: string; scriptName: string; propName: string; onStructOp: OnStructOp;
+}>) {
+  return (
+    <button
+      title="Remove property"
+      onClick={() => onStructOp(plugin, `VMAD\\${scriptName}\\${propName}`, { op: 'remove_property' })}
+      style={{ ...iconBtnStyle, color: 'var(--vscode-errorForeground, #f88)' }}
+    >×</button>
+  );
+}
+
+// Renders a pending add_property in the pending column: an inline editor (scalar) in edit mode that
+// re-issues the same add op with the new value, else a read-only value. Plus a revert control.
+function AddedPendingCell({ change, editMode, onStructOp, onRevert }: Readonly<{
+  change: PendingChange; editMode?: boolean; onStructOp?: OnStructOp; onRevert?: (id: string) => void;
+}>) {
+  const op = change.newValue as StructOp & { type: string; name: string; value: unknown };
+  const kind = opScalarKind(op.type);
+  const reissue = (v: unknown) => onStructOp?.(change.plugin, change.fieldPath, { ...op, value: v });
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      {editMode && onStructOp && kind
+        ? <VmadScalarEditor value={op.value} type={kind} onCommit={reissue} ariaLabel={`Added value for ${op.name}`} />
+        : <span>{toStr(op.value)}</span>}
+      {onRevert && (
+        <button onClick={() => onRevert(change.id)} title="Revert this change"
+          style={{ ...iconBtnStyle, color: 'var(--vscode-errorForeground, #f88)', fontSize: '11px' }}>↩</button>
+      )}
+    </span>
+  );
+}
+
 // ── VmadSection ────────────────────────────────────────────────────────────────
 
 export function VmadSection({
   vmad, columns, onOpen,
-  editMode, pendingChangeMap, onEdit, onRevert, port,
+  editMode, pendingChangeMap, onEdit, onRevert, onStructOp, port,
 }: Readonly<VmadSectionProps>): React.ReactElement | null {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -517,7 +707,9 @@ export function VmadSection({
           >
             {hasPending && (
               <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span>{toStr(change.newValue)}</span>
+                {isStructOp(change.newValue) && change.newValue.op === 'remove_property'
+                  ? <span style={{ textDecoration: 'line-through' }}>removed</span>
+                  : <span>{toStr(change.newValue)}</span>}
                 {onRevert && (
                   <button
                     onClick={() => onRevert(change.id)}
@@ -589,7 +781,14 @@ export function VmadSection({
           )}
           {p.name}
         </td>
-        {valueCells(key, p.cellStates, plugin => propertyCell(plugin, rowCtx), arrayVmadPath ?? leafPath ?? structRootPath)}
+        {valueCells(key, p.cellStates, plugin =>
+          depth === 1 && editMode && onStructOp
+            ? <span style={inlineCell}>
+                {propertyCell(plugin, rowCtx)}
+                <RemovePropertyButton plugin={plugin} scriptName={scriptName} propName={p.name} onStructOp={onStructOp} />
+              </span>
+            : propertyCell(plugin, rowCtx),
+          arrayVmadPath ?? leafPath ?? structRootPath)}
       </tr>,
     );
 
@@ -603,9 +802,54 @@ export function VmadSection({
     }
   };
 
+  // Pending add_property ops for a script, grouped by property name → per-plugin change.
+  // These are not yet in the compare tree (they apply on save), so they render as synthetic rows.
+  const pendingAddsForScript = (scriptName: string, existing: Set<string>): Map<string, Record<string, PendingChange>> => {
+    const byName = new Map<string, Record<string, PendingChange>>();
+    if (!pendingChangeMap) return byName;
+    for (const c of Object.values(pendingChangeMap)) {
+      if (!isStructOp(c.newValue) || c.newValue.op !== 'add_property') continue;
+      const parsed = parseVmadPath(c.fieldPath);
+      if (!parsed || parsed.script !== scriptName || existing.has(parsed.prop)) continue;
+      const m = byName.get(parsed.prop) ?? {};
+      m[c.plugin] = c;
+      byName.set(parsed.prop, m);
+    }
+    return byName;
+  };
+
+  const pushAddedRow = (parentKey: string, propName: string, perPlugin: Record<string, PendingChange>) => {
+    const rowKey = `${parentKey}>added>${propName}`;
+    rows.push(
+      <tr key={rowKey}>
+        <td style={{ ...baseCell, paddingLeft: 8 + 16, opacity: 0.85 }}>
+          <span style={{ color: 'var(--vscode-gitDecoration-addedResourceForeground, #8f8)', marginRight: 4 }}>＋</span>
+          <span>{propName}</span>
+        </td>
+        {columns.map((col, i) => {
+          if (col.kind === 'pending') {
+            const change = perPlugin[col.plugin];
+            return (
+              <td key={`${rowKey}:p${i}`} style={{
+                ...baseCell, fontStyle: 'italic',
+                backgroundColor: change ? 'rgba(255,200,50,0.10)' : undefined,
+                opacity: change ? 1 : 0.3,
+              }}>
+                {change && <AddedPendingCell change={change} editMode={editMode} onStructOp={onStructOp} onRevert={onRevert} />}
+              </td>
+            );
+          }
+          return <td key={`${rowKey}:d${i}`} style={{ ...baseCell, opacity: 0.3 }} />;
+        })}
+      </tr>,
+    );
+  };
+
   for (const [i, s] of vmad.scripts.entries()) {
     const key = `s:${i}:${s.name}`;
-    const hasProps = s.properties.length > 0;
+    const existingNames = new Set(s.properties.map(p => p.name));
+    const addsByName = pendingAddsForScript(s.name, existingNames);
+    const hasProps = s.properties.length > 0 || addsByName.size > 0;
     const isExpanded = expanded.has(key);
 
     rows.push(
@@ -616,12 +860,19 @@ export function VmadSection({
           )}
           {s.name}
         </td>
-        {valueCells(key, s.cellStates, plugin => s.flags[plugin] ?? null)}
+        {valueCells(key, s.cellStates, plugin =>
+          editMode && onStructOp
+            ? <span style={inlineCell}>
+                <span>{s.flags[plugin] ?? null}</span>
+                <AddPropertyButton plugin={plugin} scriptName={s.name} onStructOp={onStructOp} port={port} />
+              </span>
+            : (s.flags[plugin] ?? null))}
       </tr>,
     );
 
     if (hasProps && isExpanded) {
       for (const p of s.properties) pushPropertyRows(p, key, 1, s.name);
+      for (const [propName, perPlugin] of addsByName) pushAddedRow(key, propName, perPlugin);
     }
   }
 
