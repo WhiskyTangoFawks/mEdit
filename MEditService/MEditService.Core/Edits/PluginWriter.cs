@@ -422,10 +422,8 @@ public sealed class PluginWriter : IPluginWriter
         if (vmad == null)
             return ApplyOutcome.NotFound;
 
+        // A new script starts empty; properties are added individually via add_property.
         var entry = new ScriptEntry { Name = scriptName, Flags = ParseScriptFlags(op) };
-        if (op.TryGetProperty("properties", out var props) && props.ValueKind == JsonValueKind.Array
-            && TryBuildMembers(props, out var seeded))
-            foreach (var p in seeded) entry.Properties.Add(p);
 
         for (var i = vmad.Scripts.Count - 1; i >= 0; i--)
             if (string.Equals(vmad.Scripts[i].Name, scriptName, StringComparison.OrdinalIgnoreCase))
