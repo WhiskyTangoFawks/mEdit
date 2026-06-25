@@ -340,10 +340,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/{plugin}/worldspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["GetWorldspaces"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/{plugin}/worldspaces/{formKey}/blocks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["GetWorldspaceBlocks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/{plugin}/cells/{formKey}/references": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["GetCellReferences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/{plugin}/interior-cells": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["GetInteriorCells"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        CellReferences: {
+            persistent?: components["schemas"]["PlacedSummary"][] | null;
+            temporary?: components["schemas"]["PlacedSummary"][] | null;
+        };
+        CellSummary: {
+            formKey?: string | null;
+            editorId?: string | null;
+            /** Format: int32 */
+            cellX?: number | null;
+            /** Format: int32 */
+            cellY?: number | null;
+        };
+        CellSummaryPagedResult: {
+            items?: components["schemas"]["CellSummary"][] | null;
+            /** Format: int32 */
+            total?: number;
+        };
         ChangeGroup: {
             /** Format: uuid */
             id?: string;
@@ -457,6 +538,12 @@ export interface components {
             changeType?: string | null;
             /** Format: uuid */
             groupId?: string | null;
+        };
+        PlacedSummary: {
+            formKey?: string | null;
+            editorId?: string | null;
+            baseFormKey?: string | null;
+            recordType?: string | null;
         };
         PluginRecordTypeCount: {
             type?: string | null;
@@ -578,6 +665,28 @@ export interface components {
                 [key: string]: components["schemas"]["ConflictThis"];
             } | null;
             properties?: components["schemas"]["VmadPropertyDiff"][] | null;
+        };
+        WorldspaceBlockDto: {
+            /** Format: int32 */
+            x?: number;
+            /** Format: int32 */
+            y?: number;
+            subBlocks?: components["schemas"]["WorldspaceSubBlockDto"][] | null;
+        };
+        WorldspaceBlocks: {
+            blocks?: components["schemas"]["WorldspaceBlockDto"][] | null;
+            topCell?: components["schemas"]["CellSummary"];
+        };
+        WorldspaceSubBlockDto: {
+            /** Format: int32 */
+            x?: number;
+            /** Format: int32 */
+            y?: number;
+            cells?: components["schemas"]["CellSummary"][] | null;
+        };
+        WorldspaceSummary: {
+            formKey?: string | null;
+            editorId?: string | null;
         };
     };
     responses: never;
@@ -1487,6 +1596,135 @@ export interface operations {
             };
             /** @description Service Unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    GetWorldspaces: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorldspaceSummary"][];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    GetWorldspaceBlocks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin: string;
+                formKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorldspaceBlocks"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    GetCellReferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin: string;
+                formKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CellReferences"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    GetInteriorCells: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                plugin: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CellSummaryPagedResult"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
