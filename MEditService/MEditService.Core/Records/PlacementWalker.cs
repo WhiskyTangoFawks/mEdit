@@ -116,6 +116,9 @@ public sealed class PlacementWalker
     private IEnumerable<object> List(object? obj, string name) =>
         Get(obj, name) is IEnumerable e ? e.Cast<object>() : [];
 
-    private static int? Int(object? v) => v == null ? null : Convert.ToInt32(v, CultureInfo.InvariantCulture);
-    private static float? Float(object? v) => v == null ? null : Convert.ToSingle(v, CultureInfo.InvariantCulture);
+    // Callers only invoke these with values that are structurally present (block/sub-block
+    // numbers are non-nullable; grid/position are read only after a not-null guard), so no
+    // null branch is needed here — absence is handled at the call site.
+    private static int Int(object? v) => Convert.ToInt32(v, CultureInfo.InvariantCulture);
+    private static float Float(object? v) => Convert.ToSingle(v, CultureInfo.InvariantCulture);
 }

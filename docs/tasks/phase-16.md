@@ -29,5 +29,11 @@ and UI_SPEC §2.6.
 
 ## Proof
 
-*16.1: `dotnet test` 700+ passing; `npm run test:unit` 261 passing; integration 4 passing.
-16.2 proof + final commit hash to be filled in on completion.*
+*16.1 (read + display + edit): `dotnet test` **723 passing**; `npm run test:unit` **261
+passing**; integration **4 passing**; `npm run build` clean. `/simplify` + `/code-review`
+(high) completed, no confirmed bugs. Mutation baseline 74% (changed-files scope); all
+survivors triaged (tests strengthened, dead code removed) — confirming re-run **deferred to a
+manual run**, see [followup-mutation-workflow.md](followup-mutation-workflow.md). Commit:
+`9c41ea4` + the triage commit on branch `phase-16-1-worldspace-tree`.*
+
+*16.2 proof + final commit hash to be filled in on completion.*

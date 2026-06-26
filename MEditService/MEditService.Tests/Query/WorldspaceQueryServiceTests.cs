@@ -10,11 +10,14 @@ public class WorldspaceQueryServiceTests
 {
     // A repository stub returning a fixed set of cell-location rows, exercising the service's
     // block / sub-block grouping logic.
-    private sealed class StubReader(IReadOnlyList<CellLocationSummary> cells) : IRecordReader
+    private sealed class StubReader(
+        IReadOnlyList<CellLocationSummary> cells,
+        IReadOnlyList<RecordSummary>? records = null) : IRecordReader
     {
         public IReadOnlyList<CellLocationSummary> GetWorldspaceCells(string plugin, string worldspaceFormKey) => cells;
 
-        public PagedResult<RecordSummary> GetRecords(string t, string? p, string? s, int l, int o) => new([], 0);
+        public PagedResult<RecordSummary> GetRecords(string t, string? p, string? s, int l, int o) =>
+            new(records ?? [], (records ?? []).Count);
         public RecordDetail? GetRecord(string t, string fk, string? p, bool w) => null;
         public IReadOnlyList<RecordDetail> GetAllOverrides(string t, string fk) => [];
         public VmadData? GetVmad(string fk, string p) => null;
@@ -64,6 +67,59 @@ public class WorldspaceQueryServiceTests
         Assert.Equal(2, block00.SubBlocks.Count);
         Assert.Equal("CellA", block00.SubBlocks.Single(s => s is { X: 0, Y: 0 }).Cells.Single().EditorId);
         Assert.Equal("CellB", block00.SubBlocks.Single(s => s is { X: 1, Y: 1 }).Cells.Single().EditorId);
+    }
+
+    [Fact]
+    public void GetWorldspaceBlocks_SortsBlocksAndSubBlocksAscendingByXThenY()
+    {
+        // Scrambled input across two blocks that share X=0 but differ in Y, plus a separate X=1
+        // block. Asserts both the block ordering and the sub-block ordering are ascending — and
+        // that BlockY participates in grouping (the two X=0 blocks must stay distinct).
+        var svc = Service([
+            new CellLocationSummary("c1:M.esp", "CellC", 1, 0, 0, 0, 40, 2),
+            new CellLocationSummary("a1:M.esp", "CellA", 0, 0, 1, 1, 1, 1),
+            new CellLocationSummary("d1:M.esp", "CellD", 0, 1, 0, 0, 2, 2),
+            new CellLocationSummary("a3:M.esp", "CellA3", 0, 0, 0, 2, 3, 3),
+            new CellLocationSummary("a2:M.esp", "CellA2", 0, 0, 0, 0, 4, 4),
+        ]);
+
+        var result = svc.GetWorldspaceBlocks("M.esp", "wrld:M.esp");
+
+        // Three distinct blocks, ascending by (X, Y): (0,0), (0,1), (1,0).
+        Assert.Equal(
+            [(0, 0), (0, 1), (1, 0)],
+            result.Blocks.Select(b => (b.X, b.Y)).ToArray());
+
+        // Sub-blocks within block (0,0) ascending by (X, Y): (0,0), (0,2), (1,1).
+        var block00 = result.Blocks[0];
+        Assert.Equal(
+            [(0, 0), (0, 2), (1, 1)],
+            block00.SubBlocks.Select(s => (s.X, s.Y)).ToArray());
+    }
+
+    [Fact]
+    public void WorldspaceQuery_NoSession_ThrowsInvalidOperation()
+    {
+        // No session loaded → Repository is null → a clear InvalidOperationException, not an NRE.
+        var svc = new WorldspaceQueryService(new StubSession(null!));
+        Assert.Throws<InvalidOperationException>(() => svc.GetInteriorCells("M.esp", 50, 0));
+    }
+
+    [Fact]
+    public void GetWorldspaces_MapsRecordsToSummaries()
+    {
+        var reader = new StubReader([], [
+            new RecordSummary("0001:M.esp", "M.esp", 0, true, "WorldA"),
+            new RecordSummary("0002:M.esp", "M.esp", 0, true, null),
+        ]);
+        var svc = new WorldspaceQueryService(new StubSession(reader));
+
+        var result = svc.GetWorldspaces("M.esp");
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal("0001:M.esp", result[0].FormKey);
+        Assert.Equal("WorldA", result[0].EditorId);
+        Assert.Null(result[1].EditorId);
     }
 
     [Fact]
