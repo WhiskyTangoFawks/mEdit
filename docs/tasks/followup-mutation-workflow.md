@@ -1,5 +1,23 @@
 # Follow-up: mutation-test workflow needs rework
 
+**Status: RESOLVED (2026-06-27).** Root cause confirmed: all 139 Timeout mutants were on the
+indexing/schema path, co-covered by `RealGameLoadTests` loading the 316 MB real `Fallout4.esm`,
+which inflated every indexing mutant's timeout budget. Fixes shipped:
+- Removed the 316 MB real-game test from the suite; real-data coverage now comes from a small
+  committed plugin `MEditService.Tests/TestData/mEditTestSubset.esm` (regen via
+  `RealData/CutDownPluginGenerator.cs`) — hermetic, fast, stays in mutation scope.
+- Full-install smoke test (`RealData/RealInstallSmokeTests.cs`) auto-discovers installs (no
+  hardcoded path, multi-game ready) and is gated behind `MEDIT_SMOKE=1` so it never runs under
+  mutation.
+- Stryker: added `progress` reporter (developer-facing `%` in the terminal); reverted
+  `concurrency` to default so the machine stays usable.
+- `/validate` Step 5 + `/mutation-test` updated: targeted mutation per subtask, one full
+  changed-scope run at phase end, confirm survivors with targeted runs only (never full re-run).
+
+Original analysis retained below for reference.
+
+---
+
 **Status: Open follow-up. Not blocking — Phase 16.1 shipped without a confirming
 mutation re-run (see "What's verified" below).**
 
@@ -16,7 +34,7 @@ a **desktop GUI terminal window** (`cosmic-term` on this COSMIC machine; falls b
 gnome-terminal/xterm) plus a `script` PTY wrapper around `dotnet stryker`, so the human can
 watch live progress.
 
-What broke it:
+What broke it:analyse
 - The agent ran `run.sh` as an **agent-managed background task** (`run_in_background: true`).
   The harness tracks background tasks by **process group** and SIGKILLs the whole group on
   teardown (task stopped, or the Claude Code process exits). That group contained the spawned
