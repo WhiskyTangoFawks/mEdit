@@ -119,6 +119,56 @@ public class PlacementIndexingTests
         return rows;
     }
 
+    // Regression (Phase 16.2.2): production loads plugins as binary overlays, whose group wrapper
+    // exposes records by being IEnumerable rather than via a "Records" member (the in-memory shape).
+    // PlacementWalker must index placement off the overlay too — IndexFixture above only covers the
+    // in-memory mod, so this round-trips through disk to exercise the overlay path.
+    [Fact]
+    public void Index_FromBinaryOverlay_PopulatesPlacementAndCellLocation()
+    {
+        var mod = new Fallout4Mod(ModKey.FromFileName("OverlayWorld.esp"), Fallout4Release.Fallout4);
+        var wrld = mod.Worldspaces.AddNew("OverlayWrld");
+        var cell = new Cell(mod) { EditorID = "OverlayCell", Grid = new CellGrid { Point = new P2Int(3, 4) } };
+        var placed = new PlacedObject(mod) { EditorID = "overlayRef", Position = new P3Float(7f, 8f, 9f) };
+        cell.Persistent.Add(placed);
+        var sub = new WorldspaceSubBlock { BlockNumberX = 0, BlockNumberY = 0 };
+        sub.Items.Add(cell);
+        var block = new WorldspaceBlock { BlockNumberX = 0, BlockNumberY = 0 };
+        block.Items.Add(sub);
+        wrld.SubCells.Add(block);
+
+        var dir = Directory.CreateTempSubdirectory("medit-overlay");
+        try
+        {
+            var path = Path.Combine(dir.FullName, "OverlayWorld.esp");
+            mod.WriteToBinary(path, new Mutagen.Bethesda.Plugins.Binary.Parameters.BinaryWriteParameters
+            {
+                MastersListContent = Mutagen.Bethesda.Plugins.Binary.Parameters.MastersListContentOption.NoCheck,
+            });
+
+            using var overlay = Mutagen.Bethesda.Plugins.Records.ModFactory.ImportGetter(
+                new ModPath(mod.ModKey, path), GameRelease.Fallout4);
+
+            using var repo = new DuckDbRecordRepository(_reflector, _ddl, NullLogger.Instance);
+            repo.Initialize(GameRelease.Fallout4);
+            repo.Index(overlay, 0);
+            repo.UpdateWinners();
+
+            var rows = Query(repo,
+                "SELECT parent_cell, placement_group, pos_x FROM placement WHERE form_key = $1",
+                placed.FormKey.ToString());
+            var row = Assert.Single(rows);
+            Assert.Equal(cell.FormKey.ToString(), row["parent_cell"]);
+            Assert.Equal("persistent", row["placement_group"]);
+            Assert.Equal(7f, ToF(row["pos_x"]));
+
+            var cellRows = Query(repo,
+                "SELECT parent_worldspace FROM cell_location WHERE cell_form_key = $1", cell.FormKey.ToString());
+            Assert.Equal(wrld.FormKey.ToString(), Assert.Single(cellRows)["parent_worldspace"]);
+        }
+        finally { dir.Delete(recursive: true); }
+    }
+
     [Fact]
     public void Index_PersistentPlacedObject_WritesPlacementRow()
     {
@@ -240,6 +290,36 @@ public class PlacementIndexingTests
         Assert.Equal(1, bare.BlockX);
         Assert.Equal(1, bare.SubY);
         Assert.Null(bare.CellX);     // no grid
+    }
+
+    // ── GetPlacement (Phase 16.2.2: orchestrator placed-path lookup) ───────────
+
+    [Fact]
+    public void GetPlacement_PlacedRef_ReturnsParentCellGroupAndPosition()
+    {
+        using var b = IndexFixture();
+        var placement = b.Repo.GetPlacement(b.BarrelFk, "TestWorld.esp");
+
+        Assert.NotNull(placement);
+        Assert.Equal(b.ExtCellFk, placement.Value.ParentCell);
+        Assert.Equal("persistent", placement.Value.PlacementGroup);
+        Assert.Equal(10f, placement.Value.PosX);
+        Assert.Equal(20f, placement.Value.PosY);
+        Assert.Equal(30f, placement.Value.PosZ);
+    }
+
+    [Fact]
+    public void GetPlacement_NonPlacedRecord_ReturnsNull()
+    {
+        using var b = IndexFixture();
+        Assert.Null(b.Repo.GetPlacement(b.ExtCellFk, "TestWorld.esp"));
+    }
+
+    [Fact]
+    public void GetPlacement_AbsentFormKey_ReturnsNull()
+    {
+        using var b = IndexFixture();
+        Assert.Null(b.Repo.GetPlacement("FFFFFF:TestWorld.esp", "TestWorld.esp"));
     }
 
     [Fact]

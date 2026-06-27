@@ -19,4 +19,8 @@ public interface IRecordReader
     IReadOnlyList<CellLocationSummary> GetWorldspaceCells(string plugin, string worldspaceFormKey);
     PagedResult<CellSummary> GetInteriorCells(string plugin, int limit, int offset);
     CellReferences GetCellReferences(string plugin, string cellFormKey);
+
+    // Phase 16.2 — a placed ref's structural parentage (which cell, persistent/temporary, position),
+    // used by EditOrchestrator to stamp placement onto copy/delete changes. Null when not placed.
+    PlacementRow? GetPlacement(string formKey, string plugin);
 }

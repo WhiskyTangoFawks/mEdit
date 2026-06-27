@@ -158,6 +158,14 @@ Worldspaces
 
 Block and Sub-block nodes are grouping nodes only (no record, no click action). Clicking a CELL or REFR node opens the record editor.
 
+**Context menu actions on worldspace/cell nodes (Phase 16.2.4):**
+
+| Node | contextValue | Actions |
+| ---- | ------------ | ------- |
+| CellNode | `cell` | *(none)* |
+| PlacedGroupNode | `placedGroup-persistent` / `placedGroup-temporary` | **Create Placed…** — QuickPick REFR/ACHR + optional template FormKey; calls `POST /plugins/{plugin}/cells/{cellFormKey}/placed` |
+| PlacedNode | `refr` | **Copy as Override Into…** (same handler as `mEdit.copyAsOverrideInto`); **Delete** (same handler as `mEdit.deleteRecord`) |
+
 ---
 
 ## 3. Record Editor Panel

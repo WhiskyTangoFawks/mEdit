@@ -146,6 +146,7 @@ public sealed class InMemoryRecordRepository : IRecordRepository
     public IReadOnlyList<CellLocationSummary> GetWorldspaceCells(string plugin, string worldspaceFormKey) => [];
     public PagedResult<CellSummary> GetInteriorCells(string plugin, int limit, int offset) => new([], 0);
     public CellReferences GetCellReferences(string plugin, string cellFormKey) => new([], []);
+    public PlacementRow? GetPlacement(string formKey, string plugin) => null;
 
     public VmadData? GetVmad(string formKey, string plugin) => null; // VMAD not indexed in-memory
 

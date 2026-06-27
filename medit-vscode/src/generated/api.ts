@@ -148,6 +148,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/{plugin}/cells/{cellFormKey}/placed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["CreatePlacedRecord"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/changes/groups/save": {
         parameters: {
             query?: never;
@@ -463,6 +479,12 @@ export interface components {
         CopyRecordRequest: {
             source?: string | null;
         };
+        CreatePlacedRecordRequest: {
+            recordType?: string | null;
+            placementGroup?: string | null;
+            templateFormKey?: string | null;
+            source?: string | null;
+        };
         CreatePluginRequest: {
             name?: string | null;
         };
@@ -538,6 +560,8 @@ export interface components {
             changeType?: string | null;
             /** Format: uuid */
             groupId?: string | null;
+            parentCell?: string | null;
+            placementGroup?: string | null;
         };
         PlacedSummary: {
             formKey?: string | null;
@@ -1094,6 +1118,60 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["CreateRecordRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateRecordResult"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReferenceValidationError"][];
+                };
+            };
+        };
+    };
+    CreatePlacedRecord: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin: string;
+                cellFormKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePlacedRecordRequest"];
             };
         };
         responses: {

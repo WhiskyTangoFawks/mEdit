@@ -115,6 +115,7 @@ export class PlacedGroupNode extends vscode.TreeItem {
   readonly kind = 'placedGroup' as const;
   constructor(
     public readonly plugin: string,
+    public readonly cellFormKey: string,
     public readonly group: 'persistent' | 'temporary',
     public readonly placed: PlacedSummary[],
   ) {
@@ -126,7 +127,7 @@ export class PlacedGroupNode extends vscode.TreeItem {
 
 export class PlacedNode extends vscode.TreeItem {
   readonly kind = 'placed' as const;
-  constructor(public readonly placed: PlacedSummary) {
+  constructor(public readonly plugin: string, public readonly placed: PlacedSummary) {
     const name = placed.editorId ?? placed.baseFormKey ?? placed.formKey;
     const label = `${name} [${placed.recordType.toUpperCase()}:${formId(placed.formKey)}]`;
     super(label, vscode.TreeItemCollapsibleState.None);
@@ -193,7 +194,7 @@ export class PluginTreeProvider implements vscode.TreeDataProvider<PluginTreeNod
     if (element instanceof BlockNode) return element.block.subBlocks.map(s => new SubBlockNode(element.plugin, s));
     if (element instanceof SubBlockNode) return element.subBlock.cells.map(c => new CellNode(element.plugin, c));
     if (element instanceof CellNode) return this.fetchCellGroups(element);
-    if (element instanceof PlacedGroupNode) return element.placed.map(p => new PlacedNode(p));
+    if (element instanceof PlacedGroupNode) return element.placed.map(p => new PlacedNode(element.plugin, p));
     if (element instanceof InteriorCellsNode) return this.fetchInteriorCells(element);
     if (element instanceof RecordTypeNode) return this.fetchRecords(element);
     return [];
@@ -296,8 +297,8 @@ export class PluginTreeProvider implements vscode.TreeDataProvider<PluginTreeNod
       }
     }
     const groups: PlacedGroupNode[] = [];
-    if (refs.persistent.length) groups.push(new PlacedGroupNode(node.plugin, 'persistent', refs.persistent));
-    if (refs.temporary.length) groups.push(new PlacedGroupNode(node.plugin, 'temporary', refs.temporary));
+    if (refs.persistent.length) groups.push(new PlacedGroupNode(node.plugin, node.cell.formKey, 'persistent', refs.persistent));
+    if (refs.temporary.length) groups.push(new PlacedGroupNode(node.plugin, node.cell.formKey, 'temporary', refs.temporary));
     return groups;
   }
 

@@ -1,6 +1,6 @@
 # Phase 16 — Per-Plugin Worldspace / Cell / Placed-Object Tree + CRUD
 
-**Status: 16.1 complete (read + display + edit). 16.2 in progress (create/copy/delete).**
+**Status: Complete.**
 
 *Goal: WRLD/CELL/REFR render in their xEdit-style spatial hierarchy **per plugin** (what
 that plugin declares — records and overrides, not a winner), and the standard record
@@ -20,12 +20,15 @@ and UI_SPEC §2.6.
 - [x] Extension: per-plugin "Worldspaces" + "Interior Cells" nodes; WRLD → Block → Sub-block → Cell → Persistent/Temporary → placed; click opens editor; interior-cell pagination; spatial/placed types hidden from flat list
 - [x] Tests: indexing pass, repository reads, block grouping, tree provider; `dotnet test` 700+/`npm run test:unit` 261 green; integration green
 
-## 16.2 — Create / copy-as-override / delete placed objects (TODO)
-- [ ] `pending_changes` placement intent columns (`parent_cell`, `placement_group`)
-- [ ] `PluginWriter` cell-aware create/copy/delete (GetOrAddAsOverride parent cell; add/remove in Persistent/Temporary)
-- [ ] `EditOrchestrator` placed paths (`CreatePlacedRecord`; copy/delete capture placement from `placement`)
-- [ ] Walk surfaces pending-created/copied placed refs under their target cell; pending deletes hidden
-- [ ] Frontend create/copy/delete actions on cell/group/placed nodes
+## 16.2 — Create / copy-as-override / delete placed objects (DONE)
+
+Broken into four TDD-first sub-phases — see [phase-16.2.md](phase-16.2.md) (index + shared decisions).
+The spike (cell-override + placed construction mechanism) is proven green; sub-phases build on it.
+
+- [x] [16.2.1](phase-16.2.1.md) — `PluginWriter` copy/delete placed branches + typed link-cache wiring
+- [x] [16.2.2](phase-16.2.2.md) — `pending_changes` placement columns + `GetPlacement` + `EditOrchestrator` placed paths (+ fixed pre-existing `PlacementWalker` overlay bug)
+- [x] [16.2.3](phase-16.2.3.md) — walk overlay (surface pending created/copied, hide deletes)
+- [x] [16.2.4](phase-16.2.4.md) — frontend create/copy/delete actions on cell/group/placed nodes
 
 ## Proof
 
@@ -36,4 +39,7 @@ survivors triaged (tests strengthened, dead code removed) — confirming re-run 
 manual run**, see [followup-mutation-workflow.md](followup-mutation-workflow.md). Commit:
 `9c41ea4` + the triage commit on branch `phase-16-1-worldspace-tree`.*
 
-*16.2 proof + final commit hash to be filled in on completion.*
+*16.2 (create/copy/delete placed objects): `dotnet test` **740 passing** (RealGameLoadTests
+excluded — intermittent HTTP timeout flakiness, unrelated); `npm run test:unit` **264
+passing**; integration **4 passing**; `npm run build` clean. Batch commit pending mutation
+triage.*

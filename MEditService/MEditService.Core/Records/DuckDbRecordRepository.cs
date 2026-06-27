@@ -811,6 +811,26 @@ public sealed class DuckDbRecordRepository : IRecordRepository
         return new CellReferences(persistent, temporary);
     }
 
+    public PlacementRow? GetPlacement(string formKey, string plugin)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT parent_cell, placement_group, pos_x, pos_y, pos_z
+            FROM placement
+            WHERE form_key = $1 AND plugin = $2
+            """;
+        AddParams(cmd, [formKey, plugin]);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read()) return null;
+        return new PlacementRow(
+            formKey,
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.IsDBNull(2) ? null : reader.GetFloat(2),
+            reader.IsDBNull(3) ? null : reader.GetFloat(3),
+            reader.IsDBNull(4) ? null : reader.GetFloat(4));
+    }
+
     public IReadOnlySet<string> GetPluginsWithMatchingRecords(IEnumerable<string> tableNames)
     {
         var tables = tableNames.ToList();

@@ -35,7 +35,7 @@ public sealed class PlacementWalker
 
     public void Walk(IModGetter mod, Action<CellLocationRow> onCell, Action<PlacementRow> onPlacement)
     {
-        foreach (var wrld in List(Get(mod, "Worldspaces"), "Records"))
+        foreach (var wrld in Enumerate(Get(mod, "Worldspaces")))
         {
             var wrldFk = ((IMajorRecordGetter)wrld).FormKey.ToString();
 
@@ -57,7 +57,7 @@ public sealed class PlacementWalker
         }
 
         // Interior cells: mod.Cells (ListGroup) -> CellBlock.SubBlocks -> CellSubBlock.Cells
-        foreach (var cellBlock in List(Get(mod, "Cells"), "Records"))
+        foreach (var cellBlock in Enumerate(Get(mod, "Cells")))
             foreach (var subBlock in List(cellBlock, "SubBlocks"))
                 foreach (var cell in List(subBlock, "Cells"))
                     EmitCell(cell, null, null, null, null, null, isInterior: true, onCell, onPlacement);
@@ -115,6 +115,13 @@ public sealed class PlacementWalker
 
     private IEnumerable<object> List(object? obj, string name) =>
         Get(obj, name) is IEnumerable e ? e.Cast<object>() : [];
+
+    // Top-level groups expose their records differently across getter shapes: the in-memory
+    // Fallout4Group<T> surfaces a "Records" member, while the binary-overlay group wrapper has no
+    // such member but is itself IEnumerable<T>. Both are directly enumerable, so iterate the group
+    // object itself rather than reflecting on a member name (which only existed on the in-memory shape).
+    private static IEnumerable<object> Enumerate(object? group) =>
+        group is IEnumerable e ? e.Cast<object>() : [];
 
     // Callers only invoke these with values that are structurally present (block/sub-block
     // numbers are non-nullable; grid/position are read only after a not-null guard), so no

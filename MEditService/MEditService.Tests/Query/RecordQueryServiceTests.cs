@@ -875,6 +875,8 @@ public sealed class RecordQueryServiceTests : IClassFixture<TestPluginFixture>, 
             inner.GetInteriorCells(plugin, limit, offset);
         public CellReferences GetCellReferences(string plugin, string cellFormKey) =>
             inner.GetCellReferences(plugin, cellFormKey);
+        public PlacementRow? GetPlacement(string formKey, string plugin) =>
+            inner.GetPlacement(formKey, plugin);
     }
 
     private sealed class StubSessionManager(IRecordReader repository, GameRelease release) : ISessionManager
