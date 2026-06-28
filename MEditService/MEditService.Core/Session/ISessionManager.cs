@@ -11,6 +11,15 @@ public interface ISessionManager
     IRecordReader? Repository { get; }
 
     void Load(string dataFolderPath, string pluginsTxtPath, GameRelease gameRelease);
+
+    /// <summary>
+    /// Builds the single active session from an ordered list of scattered physical plugin paths
+    /// (an MO2-style instance's enabled plugins), with the game's implicit masters resolved from
+    /// <paramref name="gameDirectory"/>, then indexes it and computes winners. Replaces any prior
+    /// session (ADR-0015).
+    /// </summary>
+    void LoadExplicit(string gameDirectory, IReadOnlyList<(string Name, string Path)> plugins, GameRelease gameRelease);
+
     void Unload();
 
     /// <summary>

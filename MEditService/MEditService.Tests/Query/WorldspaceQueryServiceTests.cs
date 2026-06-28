@@ -37,6 +37,7 @@ public class WorldspaceQueryServiceTests
         public IGameSession? Session => null;
         public IRecordReader? Repository => repo;
         public void Load(string d, string p, GameRelease g) => throw new NotSupportedException();
+        public void LoadExplicit(string gameDirectory, IReadOnlyList<(string Name, string Path)> plugins, GameRelease gameRelease) => throw new NotSupportedException();
         public void Unload() => throw new NotSupportedException();
         public PluginResponse CreatePlugin(string n) => throw new NotSupportedException();
         public Task<SaveResult> SavePlugin(string p, IReadOnlyList<PendingChange> c) => throw new NotSupportedException();

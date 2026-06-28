@@ -110,6 +110,11 @@ public record PluginRecordTypeCount(string Type, int Count);
 public record SessionFilterRequest(string Sql);
 public record SessionFilterResponse(string? Sql);
 
+public record SessionLoadResponse(string Status, IReadOnlyList<PluginLoadFailure> Failures);
+public record SessionLoadExplicitRequest(
+    IReadOnlyList<ExplicitPlugin> Plugins, string GameDirectory, string GameRelease = "Fallout4");
+public record ExplicitPlugin(string Name, string Path);
+
 public record ReferenceResult(string FormKey, string Plugin, string FieldPath, string RecordType, string? EditorId);
 
 public record CreateRecordResult(string FormKey, Guid GroupId);

@@ -7,6 +7,8 @@ export interface WizardDeps {
   showQuickPick: (items: Array<{ label: string; detail?: string }>) => Promise<{ label: string } | undefined>;
   showInputBox: (opts: { prompt: string; value?: string }) => Thenable<string | undefined>;
   showErrorMessage: (msg: string) => void;
+  showWarningMessage: (msg: string) => void;
+  log: (msg: string) => void;
 }
 
 export class SessionWizard {
@@ -43,7 +45,7 @@ export class SessionWizard {
       paths = { dataFolder, pluginsTxt };
     }
 
-    const { response } = await this.deps.client.POST('/session/load', {
+    const { data: loadData, response } = await this.deps.client.POST('/session/load', {
       body: { dataFolderPath: paths.dataFolder, pluginsTxtPath: paths.pluginsTxt },
     });
 
@@ -52,6 +54,25 @@ export class SessionWizard {
       return false;
     }
 
+    this.reportFailures(loadData?.failures);
     return true;
+  }
+
+  // A plugin skipped during load (e.g. records Mutagen can't parse) means its records are
+  // missing from the session. This must never be silent — warn the user and log every reason.
+  private reportFailures(
+    failures: ReadonlyArray<{ name?: string | null; reason?: string | null }> | null | undefined,
+  ): void {
+    if (!failures || failures.length === 0) return;
+
+    for (const f of failures) {
+      this.deps.log(`[SessionWizard] skipped plugin '${f.name ?? '?'}': ${f.reason ?? 'unknown error'}`);
+    }
+
+    const names = failures.map((f) => f.name ?? '?').join(', ');
+    this.deps.showWarningMessage(
+      `mEdit: ${failures.length} plugin(s) were skipped — their records are NOT loaded: ${names}. ` +
+        `See the 'mEdit' output for details.`,
+    );
   }
 }

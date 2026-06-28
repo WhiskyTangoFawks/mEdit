@@ -1166,6 +1166,8 @@ public sealed class EditOrchestratorTests
 
         public void Load(string dataFolderPath, string pluginsTxtPath, GameRelease gameRelease) =>
             throw new NotSupportedException();
+        public void LoadExplicit(string gameDirectory, IReadOnlyList<(string Name, string Path)> plugins, GameRelease gameRelease) =>
+            throw new NotSupportedException();
         public void Unload() => throw new NotSupportedException();
         public PluginResponse CreatePlugin(string name) => throw new NotSupportedException();
         public string ReserveFormKey(string plugin) => throw new NotSupportedException();
@@ -1199,6 +1201,7 @@ public sealed class EditOrchestratorTests
         public string DataFolderPath => _inner.DataFolderPath;
         public GameRelease GameRelease => _inner.GameRelease;
         public IReadOnlyList<PluginMetadata> Plugins => _plugins;
+        public IReadOnlyList<PluginLoadFailure> LoadFailures => [];
         public ILinkCache LinkCache => _inner.LinkCache;
         public string? FilterSql { get => _inner.FilterSql; set => _inner.FilterSql = value; }
         public IModGetter? GetMod(string pluginName) => _inner.GetMod(pluginName);

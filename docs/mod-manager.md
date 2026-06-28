@@ -102,7 +102,7 @@ medit does not invent a modlist format — its format **is** MO2's (see [MM ADR-
 | **Native** | First-class | Fresh setups; writes MO2-format instances so they open in MO2 too. No separate format. |
 | **Vortex** | Deferred (afterthought) | Read-only snapshot via the `vortex.deployment.json` deployment manifest. No simple text modlist exists; full management is out of scope. |
 
-**Profiles**: MO2's active profile is read from `ModOrganizer.ini` (`[General] selected_profile`); each profile has its own `modlist.txt`/`plugins.txt`. The **session boundary is the active profile's modlist** — switching profiles is a new session.
+**Profiles**: each profile under `profiles/` has its own `modlist.txt`/`plugins.txt`. The default active profile is read from `ModOrganizer.ini` (`[General] selected_profile`), but the **user selects the active profile** (MO2 presents a dropdown — VS Code mechanism is a UI-spec decision); the choice is persisted back to `selected_profile`. The **session boundary is the active profile's modlist** — switching profiles is a new session. Per-profile isolated saves and base-game config (`local savegames`/INI) are optional MO2 features, deferred.
 
 ---
 
@@ -264,18 +264,21 @@ Plugin List view extends the existing tree: index inline; drag-and-drop reorder 
 
 ## Implementation Phases
 
-| Phase | Scope | Effort |
-|---|---|---|
-| **M-1** | `GameDirectory` (config + detect + stock-folder setup); MO2 `IModlistSource` (read `mods/`, active profile `modlist.txt`/`plugins.txt`); `ModListProvider` tree; enable/disable + manual ordering writing MO2 format | ~1.5 wk |
-| **M-2** | `FileConflictIndex`, status badges (conflict/missing), `MasterReader`, conflict hover tooltip | ~3 days |
-| **M-3** | `Deployer`: `fs.link` deploy/purge, manifest, overwrite collection, same-volume/symlink fallback, launch wiring (standalone mode) | ~1 wk |
-| **M-4** | Editing integration: backend `load-explicit` session; `BackendManager` spawn/teardown; Mod List ⇄ Plugin List toggle wiring the active modlist into a session | ~1 wk |
-| **M-5** | Manual install from archive (zip/7z) writing MO2-format mod folders + `meta.ini`; FOMOD detection (flag, don't implement) | ~1 wk |
-| **M-6** | `nxm://` handler, Nexus API download, API key storage | ~1 wk |
-| **M-7** | Nexus version check, update-available badge | ~2 days |
-| **M-8** | Plugin auto-sort, write `plugins.txt` | ~3 days |
+Broken down into task files under [docs/tasks/](tasks/) as `modbench-N`. The `load-explicit` session spike (Modbench-1) goes first to de-risk the only cross-cutting unknown before any UI is built on it.
 
-**M-1 → M-3** is a working MO2-compatible mod manager with conflict detection and game launch, no editor coupling. **M-4** unifies it with the record editor. No platform-specific VFS code anywhere.
+| Task | Scope | Effort |
+|---|---|---|
+| [**Modbench-1**](tasks/modbench-1.md) | **Spike** — `load-explicit` backend session source (ordered scattered physical paths); de-risk the session/lifecycle unknown | ~2 days |
+| [**Modbench-2**](tasks/modbench-2.md) (M-1) | `GameDirectory` (config + detect + stock-folder setup); MO2 `IModlistSource` (read `mods/`, active profile `modlist.txt`/`plugins.txt`); `ModListProvider` tree; enable/disable + manual ordering writing MO2 format | ~1.5 wk |
+| [**Modbench-3**](tasks/modbench-3.md) (M-2) | `FileConflictIndex`, status badges (conflict/missing), `MasterReader`, conflict hover tooltip | ~3 days |
+| [**Modbench-4**](tasks/modbench-4.md) (M-3) | `Deployer`: `fs.link` deploy/purge, manifest, overwrite collection, same-volume/symlink fallback, launch wiring (standalone mode) | ~1 wk |
+| [**Modbench-5**](tasks/modbench-5.md) (M-4) | Editing integration: promote `load-explicit` session; `BackendManager` spawn/teardown; Mod List ⇄ Plugin List toggle wiring the active modlist into a session | ~1 wk |
+| [**Modbench-6**](tasks/modbench-6.md) (M-5) | Manual install from archive (zip/7z) writing MO2-format mod folders + `meta.ini`; FOMOD detection (flag, don't implement) | ~1 wk |
+| [**Modbench-7**](tasks/modbench-7.md) (M-6) | `nxm://` handler, Nexus API download, API key storage | ~1 wk |
+| [**Modbench-8**](tasks/modbench-8.md) (M-7) | Nexus version check, update-available badge | ~2 days |
+| [**Modbench-9**](tasks/modbench-9.md) (M-8) | Plugin auto-sort, write `plugins.txt` | ~3 days |
+
+**Modbench-2 → 4** is a working MO2-compatible mod manager with conflict detection and game launch, no editor coupling. **Modbench-5** unifies it with the record editor (on the spike proven in Modbench-1). No platform-specific VFS code anywhere.
 
 ---
 

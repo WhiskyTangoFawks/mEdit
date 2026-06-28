@@ -1,3 +1,4 @@
+using Mutagen.Bethesda;
 using Mutagen.Bethesda.Fallout4;
 using Mutagen.Bethesda.Plugins;
 
@@ -47,9 +48,60 @@ public sealed class PluginFixtureBuilder
 
         return new PluginFixtureData(dataFolder, pluginsTxtPath);
     }
+
+    /// <summary>
+    /// Builds the plugins into <em>scattered</em> physical locations to mirror an MO2 instance:
+    /// implicit masters (e.g. Fallout4.esm) land in a single game directory; every other plugin
+    /// gets its own folder. Returns the game directory plus the ordered explicit
+    /// <c>{Name, Path}</c> list (non-implicit plugins, in declared order) for <c>LoadExplicit</c>.
+    /// </summary>
+    public ScatteredFixtureData BuildScattered()
+    {
+        var implicitNames = Implicits.Get(GameRelease.Fallout4).Listings
+            .Select(l => l.FileName.ToString())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var root = Path.Combine(Path.GetTempPath(), $"{_prefix}-scatter-{Guid.NewGuid():N}");
+        var gameDir = Path.Combine(root, "GameDir");
+        Directory.CreateDirectory(gameDir);
+
+        var builtMods = new List<Fallout4Mod>();
+        var explicitPlugins = new List<(string Name, string Path)>();
+        var i = 0;
+        foreach (var (name, _, configure) in _plugins)
+        {
+            var mod = new Fallout4Mod(ModKey.FromFileName(name), Fallout4Release.Fallout4);
+            configure?.Invoke(mod, builtMods.AsReadOnly());
+
+            string targetPath;
+            if (implicitNames.Contains(name))
+            {
+                targetPath = Path.Combine(gameDir, name);
+            }
+            else
+            {
+                var folder = Path.Combine(root, $"mod-{i:D2}-{Path.GetFileNameWithoutExtension(name)}");
+                Directory.CreateDirectory(folder);
+                targetPath = Path.Combine(folder, name);
+                explicitPlugins.Add((name, targetPath));
+            }
+
+            mod.WriteToBinary(targetPath);
+            builtMods.Add(mod);
+            i++;
+        }
+
+        return new ScatteredFixtureData(root, gameDir, explicitPlugins);
+    }
 }
 
 public sealed record PluginFixtureData(string DataFolder, string PluginsTxtPath) : IDisposable
 {
     public void Dispose() => Directory.Delete(DataFolder, recursive: true);
+}
+
+public sealed record ScatteredFixtureData(
+    string Root, string GameDirectory, IReadOnlyList<(string Name, string Path)> Plugins) : IDisposable
+{
+    public void Dispose() => Directory.Delete(Root, recursive: true);
 }
