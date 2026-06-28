@@ -66,6 +66,22 @@ public sealed class GameSessionLoadExplicitTests
     }
 
     [Fact]
+    public void LoadExplicit_MissingPluginFile_IsWarnedAndSkipped_NotALoadFailure()
+    {
+        using var fx = new PluginFixtureBuilder("gs-explicit-missing")
+            .WithPlugin("Good.esp", mod => mod.Npcs.AddNew("GoodNpc"))
+            .BuildScattered();
+
+        var plugins = fx.Plugins.Append(("Missing.esp", "/nonexistent/path/Missing.esp")).ToList();
+
+        using var session = GameSession.LoadExplicit(fx.GameDirectory, plugins, GameRelease.Fallout4);
+
+        Assert.Contains(session.Plugins, p => p.Name == "Good.esp");
+        Assert.DoesNotContain(session.Plugins, p => p.Name == "Missing.esp");
+        Assert.Empty(session.LoadFailures);
+    }
+
+    [Fact]
     public void LoadExplicit_UnparseablePlugin_IsSkippedAndReported_RestStillLoad()
     {
         using var fx = new PluginFixtureBuilder("gs-explicit-bad")

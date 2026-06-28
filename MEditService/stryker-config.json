@@ -7,8 +7,7 @@
     "coverage-analysis": "perTest",
     "mutation-level": "Standard",
     "reporters": [
-      "json",
-      "progress"
+      "json"
     ],
     "thresholds": {
       "high": 80,
