@@ -204,6 +204,7 @@ public sealed class PluginSaverSaveGroupTests
         public IGameSession? Session => _session;
         public IRecordReader? Repository => throw new NotSupportedException();
         public void Load(string d, string p, GameRelease g) => throw new NotSupportedException();
+        public void LoadExplicit(string gameDirectory, IReadOnlyList<(string Name, string Path)> plugins, GameRelease gameRelease) => throw new NotSupportedException();
         public void Unload() => throw new NotSupportedException();
         public PluginResponse CreatePlugin(string name) => throw new NotSupportedException();
         public string ReserveFormKey(string plugin) => throw new NotSupportedException();
@@ -215,6 +216,7 @@ public sealed class PluginSaverSaveGroupTests
     private sealed class StubGameSession(IReadOnlyList<PluginMetadata> plugins) : IGameSession
     {
         public IReadOnlyList<PluginMetadata> Plugins => plugins;
+        public IReadOnlyList<PluginLoadFailure> LoadFailures => [];
         public string DataFolderPath => throw new NotSupportedException();
         public GameRelease GameRelease => throw new NotSupportedException();
         public ILinkCache LinkCache => throw new NotSupportedException();

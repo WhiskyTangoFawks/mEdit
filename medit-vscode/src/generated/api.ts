@@ -340,6 +340,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/session/load-explicit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["LoadExplicitSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/session/filter": {
         parameters: {
             query?: never;
@@ -505,6 +521,10 @@ export interface components {
         DeleteRecordsRequest: {
             records?: components["schemas"]["DeleteRecordTarget"][] | null;
         };
+        ExplicitPlugin: {
+            name?: string | null;
+            path?: string | null;
+        };
         FieldDiff: {
             fieldName?: string | null;
             values?: {
@@ -568,6 +588,10 @@ export interface components {
             editorId?: string | null;
             baseFormKey?: string | null;
             recordType?: string | null;
+        };
+        PluginLoadFailure: {
+            name?: string | null;
+            reason?: string | null;
         };
         PluginRecordTypeCount: {
             type?: string | null;
@@ -653,10 +677,19 @@ export interface components {
         SessionFilterResponse: {
             sql?: string | null;
         };
+        SessionLoadExplicitRequest: {
+            plugins?: components["schemas"]["ExplicitPlugin"][] | null;
+            gameDirectory?: string | null;
+            gameRelease?: string | null;
+        };
         SessionLoadRequest: {
             dataFolderPath?: string | null;
             pluginsTxtPath?: string | null;
             gameRelease?: string | null;
+        };
+        SessionLoadResponse: {
+            status?: string | null;
+            failures?: components["schemas"]["PluginLoadFailure"][] | null;
         };
         VmadCompare: {
             scripts?: components["schemas"]["VmadScriptDiff"][] | null;
@@ -1563,7 +1596,69 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["SessionLoadResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    LoadExplicitSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionLoadExplicitRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionLoadResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
             };
         };
     };

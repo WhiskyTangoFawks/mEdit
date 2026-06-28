@@ -6,9 +6,9 @@ Python is the scripting language modders and data-heavy workflow users are most 
 
 ## Consequences
 
-- The C# backend spawns a Python subprocess to execute scripts (`POST /script/run`).
 - Python must be available in the user's environment (not bundled).
 - Agents generating scripts target Python.
+- Scripts execute as HTTP clients of the backend, not a backend-spawned subprocess — see [ADR-0024](0024-python-scripts-are-http-clients.md). (This supersedes an earlier consequence that had the backend spawn a Python subprocess via `POST /script/run`.)
 
 ## Considered options
 

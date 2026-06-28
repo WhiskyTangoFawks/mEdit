@@ -8,6 +8,12 @@ public static class SessionEndpoints
 {
     public static IEndpointRouteBuilder MapSessionEndpoints(this IEndpointRouteBuilder app)
     {
+        static IResult? ParseGameRelease(string? raw, out GameRelease release)
+        {
+            if (Enum.TryParse(raw, out release)) return null;
+            return Results.Problem($"Unknown game release: '{raw}'. Valid values: {string.Join(", ", Enum.GetNames<GameRelease>())}", statusCode: 400);
+        }
+
         app.MapPost("/session/load", (SessionLoadRequest req, ISessionManager sessionManager, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger(nameof(SessionEndpoints));
@@ -16,13 +22,12 @@ public static class SessionEndpoints
             if (!File.Exists(req.PluginsTxtPath))
                 return Results.Problem($"Plugins.txt not found: {req.PluginsTxtPath}", statusCode: 400);
 
-            if (!Enum.TryParse<GameRelease>(req.GameRelease, out var gameRelease))
-                return Results.Problem($"Unknown game release: '{req.GameRelease}'. Valid values: {string.Join(", ", Enum.GetNames<GameRelease>())}", statusCode: 400);
+            if (ParseGameRelease(req.GameRelease, out var gameRelease) is { } releaseErr) return releaseErr;
 
             try
             {
                 sessionManager.Load(req.DataFolderPath, req.PluginsTxtPath, gameRelease);
-                return Results.Ok(new { status = "loaded" });
+                return Results.Ok(new SessionLoadResponse("loaded", sessionManager.Session?.LoadFailures ?? []));
             }
             catch (Exception ex)
             {
@@ -31,7 +36,43 @@ public static class SessionEndpoints
             }
         })
         .WithName("LoadSession")
-        .WithTags("Session");
+        .WithTags("Session")
+        .Produces<SessionLoadResponse>()
+        .ProducesProblem(400)
+        .ProducesProblem(500);
+
+        app.MapPost("/session/load-explicit", (SessionLoadExplicitRequest req, ISessionManager sessionManager, ILoggerFactory loggerFactory) =>
+        {
+            var logger = loggerFactory.CreateLogger(nameof(SessionEndpoints));
+            if (!Directory.Exists(req.GameDirectory))
+                return Results.Problem($"Game directory not found: {req.GameDirectory}", statusCode: 400);
+
+            if (ParseGameRelease(req.GameRelease, out var gameRelease) is { } releaseErr) return releaseErr;
+
+            if (req.Plugins is null || req.Plugins.Any(p => string.IsNullOrEmpty(p.Name) || string.IsNullOrEmpty(p.Path)))
+                return Results.Problem("Each plugin entry must have a non-empty Name and Path.", statusCode: 400);
+
+            var missing = req.Plugins.Where(p => !File.Exists(p.Path)).Select(p => p.Path).ToList();
+            if (missing.Count > 0)
+                return Results.Problem($"Plugin file(s) not found: {string.Join(", ", missing)}", statusCode: 400);
+
+            try
+            {
+                var explicitPlugins = req.Plugins.Select(p => (p.Name, p.Path)).ToList();
+                sessionManager.LoadExplicit(req.GameDirectory, explicitPlugins, gameRelease);
+                return Results.Ok(new SessionLoadResponse("loaded", sessionManager.Session?.LoadFailures ?? []));
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to load explicit session from {GameDirectory}", req.GameDirectory);
+                return Results.Problem(ex.Message, statusCode: 500);
+            }
+        })
+        .WithName("LoadExplicitSession")
+        .WithTags("Session")
+        .Produces<SessionLoadResponse>()
+        .ProducesProblem(400)
+        .ProducesProblem(500);
 
         app.MapPost("/session/filter", (SessionFilterRequest req, ISessionManager sessionManager, ILoggerFactory loggerFactory) =>
         {

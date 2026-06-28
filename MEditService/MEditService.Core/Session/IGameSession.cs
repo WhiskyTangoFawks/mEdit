@@ -9,6 +9,7 @@ public interface IGameSession : IDisposable
     string DataFolderPath { get; }
     GameRelease GameRelease { get; }
     IReadOnlyList<PluginMetadata> Plugins { get; }
+    IReadOnlyList<PluginLoadFailure> LoadFailures { get; }
     ILinkCache LinkCache { get; }
     string? FilterSql { get; set; }
     IModGetter? GetMod(string pluginName);

@@ -885,6 +885,7 @@ public sealed class RecordQueryServiceTests : IClassFixture<TestPluginFixture>, 
         public IRecordReader? Repository => repository;
 
         public void Load(string dataFolderPath, string pluginsTxtPath, GameRelease gameRelease) => throw new NotSupportedException();
+        public void LoadExplicit(string gameDirectory, IReadOnlyList<(string Name, string Path)> plugins, GameRelease gameRelease) => throw new NotSupportedException();
         public void Unload() => throw new NotSupportedException();
         public PluginResponse CreatePlugin(string name) => throw new NotSupportedException();
         public string ReserveFormKey(string plugin) => throw new NotSupportedException();
@@ -901,6 +902,7 @@ public sealed class RecordQueryServiceTests : IClassFixture<TestPluginFixture>, 
         public string DataFolderPath => "";
         public GameRelease GameRelease => release;
         public IReadOnlyList<PluginMetadata> Plugins => [];
+        public IReadOnlyList<PluginLoadFailure> LoadFailures => [];
         public Mutagen.Bethesda.Plugins.Cache.ILinkCache LinkCache => throw new NotSupportedException();
         public string? FilterSql { get; set; }
         public Mutagen.Bethesda.Plugins.Records.IModGetter? GetMod(string pluginName) => null;

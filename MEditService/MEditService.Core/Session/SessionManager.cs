@@ -58,35 +58,8 @@ public sealed class SessionManager : ISessionManager, IDisposable
 
                 _logger.LogInformation("Creating game session (reading plugins list and opening binary overlays)");
                 var session = new GameSession(dataFolderPath, pluginsTxtPath, gameRelease, _logger);
-                _logger.LogInformation("Game session created. {Count} plugin(s) loaded: {Names}",
-                    session.Plugins.Count,
-                    string.Join(", ", session.Plugins.Select(p => p.Name)));
-
-                _logger.LogInformation("Initializing DuckDB record repository");
-                var repository = _repositoryFactory.Create(gameRelease);
-
-                _nextFormIds.Clear();
-                foreach (var plugin in session.Plugins)
-                {
-                    var mod = session.GetMod(plugin.Name)!;
-
-                    _logger.LogInformation("Indexing {Plugin} ({RecordCount} records)", plugin.Name, plugin.RecordCount);
-                    repository.Index(mod, plugin.LoadOrderIndex);
-                    _logger.LogInformation("Indexed {Plugin}", plugin.Name);
-
-                    if (!plugin.IsImmutable)
-                        _nextFormIds[plugin.Name] = mod.NextFormID;
-                }
-
-                _logger.LogInformation("Computing winners");
-                repository.UpdateWinners();
-
-                _changeLifecycle?.OnSessionLoaded(repository.Connection);
-                _session = session;
-                _repository = repository;
-                _dataFolderPath = dataFolderPath;
-                _pluginsTxtPath = pluginsTxtPath;
-                _gameRelease = gameRelease;
+                try { IndexAndStore(session, gameRelease, dataFolderPath, pluginsTxtPath); }
+                catch { session.Dispose(); throw; }
                 _logger.LogInformation("Session load complete");
             }
         }
@@ -95,6 +68,65 @@ public sealed class SessionManager : ISessionManager, IDisposable
             _logger.LogError(ex, "Session load failed");
             throw;
         }
+    }
+
+    public void LoadExplicit(string gameDirectory, IReadOnlyList<(string Name, string Path)> plugins, GameRelease gameRelease)
+    {
+        _logger.LogInformation("Explicit session load starting. GameDir={GameDir} Plugins={Count} Game={Game}",
+            gameDirectory, plugins.Count, gameRelease);
+
+        try
+        {
+            lock (_lock)
+            {
+                DisposeCurrentSession();
+
+                _logger.LogInformation("Creating explicit game session from scattered paths");
+                var session = GameSession.LoadExplicit(gameDirectory, plugins, gameRelease, _logger);
+                // No plugins.txt for an explicit session; the game directory is the implicit-master root.
+                try { IndexAndStore(session, gameRelease, gameDirectory, pluginsTxtPath: null); }
+                catch { session.Dispose(); throw; }
+                _logger.LogInformation("Explicit session load complete");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Explicit session load failed");
+            throw;
+        }
+    }
+
+    // Indexes the session's plugins into a fresh repository, computes winners, and swaps it in as the
+    // single active session (ADR-0015). Must be called under _lock after DisposeCurrentSession.
+    private void IndexAndStore(GameSession session, GameRelease gameRelease, string dataFolderPath, string? pluginsTxtPath)
+    {
+        _logger.LogInformation("Game session created. {Count} plugin(s) loaded: {Names}",
+            session.Plugins.Count, string.Join(", ", session.Plugins.Select(p => p.Name)));
+
+        _logger.LogInformation("Initializing DuckDB record repository");
+        var repository = _repositoryFactory.Create(gameRelease);
+
+        _nextFormIds.Clear();
+        foreach (var plugin in session.Plugins)
+        {
+            var mod = session.GetMod(plugin.Name)!;
+
+            _logger.LogInformation("Indexing {Plugin} ({RecordCount} records)", plugin.Name, plugin.RecordCount);
+            repository.Index(mod, plugin.LoadOrderIndex);
+
+            if (!plugin.IsImmutable)
+                _nextFormIds[plugin.Name] = mod.NextFormID;
+        }
+
+        _logger.LogInformation("Computing winners");
+        repository.UpdateWinners();
+
+        _changeLifecycle?.OnSessionLoaded(repository.Connection);
+        _session = session;
+        _repository = repository;
+        _dataFolderPath = dataFolderPath;
+        _pluginsTxtPath = pluginsTxtPath;
+        _gameRelease = gameRelease;
     }
 
     public PluginResponse CreatePlugin(string name)
@@ -114,6 +146,9 @@ public sealed class SessionManager : ISessionManager, IDisposable
         {
             if (_session is null)
                 throw new InvalidOperationException(NoSessionMessage);
+
+            if (_pluginsTxtPath is null)
+                throw new InvalidOperationException("Cannot create a plugin in an explicit session — no plugins.txt to update.");
 
             var filePath = Path.Combine(_dataFolderPath!, name);
             if (File.Exists(filePath))

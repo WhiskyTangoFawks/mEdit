@@ -80,6 +80,8 @@ export async function activate(context: vscode.ExtensionContext) {
       showInputBox: (opts) =>
         vscode.window.showInputBox({ prompt: opts.prompt, value: opts.value }),
       showErrorMessage: (msg) => { void vscode.window.showErrorMessage(msg); },
+      showWarningMessage: (msg) => { void vscode.window.showWarningMessage(msg); },
+      log,
     }),
     refreshTree: () => treeProvider.refresh(),
     refreshGroupTree: () => changeGroupTreeProvider.refresh(),

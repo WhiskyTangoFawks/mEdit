@@ -43,3 +43,13 @@ Update when: adding a command (add ID to `EXPECTED_COMMANDS`), or new `extension
 - All `catch` blocks log to OutputChannel before showing UI or swallowing. No silent `catch { }`.
 - `PluginTreeProvider` shows error tree node instead of empty list when fetch fails.
 - Webview: all async ops must check `resp.ok` and set error state on failure. No fire-and-forget fetches.
+
+## Error surfacing ([ADR-0026](../docs/adr/0026-error-surfacing-policy.md))
+
+Principle: **the user's mental model must never be silently wrong.** Missing/incomplete data the UI implies is present is a mandatory notification — even on an HTTP-200 "success" (e.g. a skipped plugin). Surface by severity tier, never blanket-popup:
+
+- **Integrity / silent-wrong-state** (skipped plugin, partial save, failed reindex) → notification (warn/error) **+** output log. Always.
+- **Explicit action failed** (a command the user ran) → error notification + log.
+- **Background / recoverable / frequent** (tree fetch blip, poll) → inline UI (error tree node, status bar) + log, *not* a toast.
+
+Surface via an **injected reporter** dep (logs detail to the channel, shows the surface for the severity) — no raw `vscode.window.*` in `SessionController`/repositories; keeps it testable like the `SessionWizard` skipped-plugin tests. Backend returns **structured failures** (named record, e.g. `SessionLoadResponse.Failures`); the frontend decides how to surface — backend never swallows a partial outcome.
