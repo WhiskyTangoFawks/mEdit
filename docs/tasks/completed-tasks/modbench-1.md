@@ -52,6 +52,6 @@ Hand-built the ordered list from the active profile's `plugins.txt` (enabled plu
 
 ## Proof
 
-`dotnet test -v minimal` → **757 passed, 0 failed**. Frontend: `test:unit` 268 passed, `test:integration` 4 passing, `build` clean. New tests: `GameSessionLoadExplicitTests` (4, incl. resilient skip), `SessionManagerLoadExplicitTests` (3), `SessionApiTests` load-explicit + failure reporting (3), `SessionWizard.test.ts` failure surfacing (2).
+`dotnet test -v minimal` → **758 passed, 0 failed**. Frontend: `test:unit` 268 passed, `test:integration` 4 passing, `build` clean. New tests: `GameSessionLoadExplicitTests` (5, incl. resilient skip + missing-file warn-not-fail), `SessionManagerLoadExplicitTests` (3), `SessionApiTests` load-explicit + failure reporting (3), `SessionWizard.test.ts` failure surfacing (2).
 
-Branched from `4d80d64`. Commit hash: *to fill on commit.*
+Branched from `4d80d64`. Commits: `2910c2c` (implementation), `028af12` (mutation triage).
