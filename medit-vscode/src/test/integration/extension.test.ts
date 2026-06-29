@@ -71,6 +71,10 @@ describe('mEdit command registration', () => {
     'mEdit.saveAllGroups',
     'mEdit.revertAllGroups',
     'mEdit.createPlaced',
+    'mEdit.modList.filter',
+    'mEdit.modList.switchProfile',
+    'mEdit.modList.launchMedit',
+    'mEdit.modList.refresh',
   ];
 
   it('registers all expected commands on activation', async () => {
