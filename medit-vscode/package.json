@@ -49,12 +49,19 @@
     "views": {
       "medit": [
         {
+          "id": "mEdit.modList",
+          "name": "Mods",
+          "when": "medit.viewMode == 'loadout'"
+        },
+        {
           "id": "mEdit.pluginTree",
-          "name": "Plugins"
+          "name": "Plugins",
+          "when": "medit.viewMode == 'editing'"
         },
         {
           "id": "mEdit.changeGroupTree",
-          "name": "Change Groups"
+          "name": "Change Groups",
+          "when": "medit.viewMode == 'editing'"
         }
       ]
     },
@@ -134,6 +141,26 @@
         "command": "mEdit.revertAllGroups",
         "title": "mEdit: Revert All Groups",
         "icon": "$(discard)"
+      },
+      {
+        "command": "mEdit.modList.filter",
+        "title": "mEdit: Filter Mods…",
+        "icon": "$(search)"
+      },
+      {
+        "command": "mEdit.modList.switchProfile",
+        "title": "mEdit: Switch Profile…",
+        "icon": "$(account)"
+      },
+      {
+        "command": "mEdit.modList.launchMedit",
+        "title": "mEdit: Launch mEdit",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "mEdit.modList.refresh",
+        "title": "mEdit: Refresh Mod List",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
@@ -157,6 +184,26 @@
           "command": "mEdit.clearFilter",
           "when": "view == mEdit.pluginTree && mEdit.filterActive",
           "group": "navigation"
+        },
+        {
+          "command": "mEdit.modList.filter",
+          "when": "view == mEdit.modList",
+          "group": "navigation@1"
+        },
+        {
+          "command": "mEdit.modList.switchProfile",
+          "when": "view == mEdit.modList",
+          "group": "navigation@2"
+        },
+        {
+          "command": "mEdit.modList.launchMedit",
+          "when": "view == mEdit.modList",
+          "group": "navigation@3"
+        },
+        {
+          "command": "mEdit.modList.refresh",
+          "when": "view == mEdit.modList",
+          "group": "navigation@4"
         },
         {
           "command": "mEdit.saveAllGroups",

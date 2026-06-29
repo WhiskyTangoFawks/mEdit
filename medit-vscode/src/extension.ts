@@ -14,6 +14,8 @@ import { FilterCodeLensProvider } from './FilterCodeLensProvider';
 import { buildWebviewHtml } from './webviewHtml';
 import { EXTENSION_TO_WEBVIEW, WEBVIEW_TO_EXTENSION, type ExtensionToWebview, type WebviewToExtension } from './messages';
 import { openReferencedByPanel } from './ReferencedByPanel';
+import { Mo2ModlistSource } from './modmanager/mo2/Mo2ModlistSource';
+import { ModListProvider } from './modmanager/ModListProvider';
 
 let backendManager: BackendManager | undefined;
 
@@ -99,6 +101,72 @@ export async function activate(context: vscode.ExtensionContext) {
   const changeGroupTreeView = vscode.window.createTreeView('mEdit.changeGroupTree', {
     treeDataProvider: changeGroupTreeProvider,
   });
+
+  // ── Mod List (Loadout) view ──────────────────────────────────────────────────
+  // The open workspace root IS the MO2 instance (see medit-vscode/CLAUDE.md). Until
+  // the Loadout↔Editing toggle lands (Modbench-5), Mod List is the only visible view.
+  void vscode.commands.executeCommand('setContext', 'medit.viewMode', 'loadout');
+  const instanceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (instanceRoot) {
+    const modlistSource = new Mo2ModlistSource(instanceRoot);
+    const modListProvider = new ModListProvider(modlistSource, log);
+    const modListView = vscode.window.createTreeView('mEdit.modList', {
+      treeDataProvider: modListProvider,
+      showCollapseAll: true,
+    });
+
+    const updateProfileDescription = async () => {
+      try {
+        modListView.description = await modlistSource.getActiveProfile();
+      } catch (err) {
+        log(`[extension] reading active profile failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    };
+    void updateProfileDescription();
+
+    context.subscriptions.push(
+      modListView,
+      modListView.onDidChangeCheckboxState(async (e) => {
+        for (const [node, state] of e.items) {
+          if (node.kind !== 'mod') continue;
+          try {
+            await modListProvider.setModEnabled(node.mod.name, state === vscode.TreeItemCheckboxState.Checked);
+          } catch (err) {
+            // ADR-0026: a failed user action must surface, not silently leave the checkbox
+            // out of sync with disk. Log detail, notify, and refresh to resync the checkbox.
+            log(`[extension] toggling "${node.mod.name}" failed: ${err instanceof Error ? err.message : String(err)}`);
+            void vscode.window.showErrorMessage(`mEdit: Failed to update "${node.mod.name}".`);
+            modListProvider.refresh();
+          }
+        }
+      }),
+      vscode.commands.registerCommand('mEdit.modList.refresh', () => {
+        modListProvider.refresh();
+        void updateProfileDescription();
+      }),
+      vscode.commands.registerCommand('mEdit.modList.switchProfile', async () => {
+        const [profiles, active] = await Promise.all([
+          modlistSource.listProfiles(),
+          modlistSource.getActiveProfile(),
+        ]);
+        const picked = await vscode.window.showQuickPick(
+          profiles.map((p) => ({ label: p, description: p === active ? 'current' : undefined })),
+          { placeHolder: 'Switch profile' },
+        );
+        if (!picked || picked.label === active) return;
+        await modListProvider.switchProfile(picked.label);
+        void updateProfileDescription();
+      }),
+      vscode.commands.registerCommand('mEdit.modList.filter', () => {
+        void vscode.window.showInformationMessage('mEdit: Mod list filter is coming in Modbench-2.3.');
+      }),
+      vscode.commands.registerCommand('mEdit.modList.launchMedit', () => {
+        void vscode.window.showInformationMessage('mEdit: Launch mEdit is wired in Modbench-5.');
+      }),
+    );
+  } else {
+    log('[extension] No workspace folder open — Mod List view not registered.');
+  }
 
   context.subscriptions.push(
     treeView,
